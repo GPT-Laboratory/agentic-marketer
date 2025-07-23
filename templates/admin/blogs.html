@@ -11,7 +11,8 @@
     <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#blogModal" onclick="openBlogModal()">
         <i class="fas fa-plus"></i> New Blog Post
     </button>
-    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal" onclick="openAIBlogModal()">
+    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal"
+        onclick="openAIBlogModal()">
         <i class="fas fa-plus"></i> New AI Blog Post
     </button>
     <div class="card shadow mb-4">
@@ -93,26 +94,39 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="blogModalLabel">New Blog Post</h5>
+                <h5 class="modal-title" id="aiblogModalLabel">New Blog Post</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form id="aiblogForm" method="POST">
                 <div class="modal-body">
+                    <!-- drowdown for selecting text/link -->
                     <div class="mb-3">
-                        <label class="form-label">Title</label>
-                        <input type="text" class="form-control" id="blogTitle" name="title" required>
+                        <label for="selectTextLink" class="form-label">Select Content Type</label>
+                        <select class="form-control" id="selectTextLink" name="selectTextLink">
+                            <option value="text">Text</option>
+                            <option value="link">Link</option>
+                        </select>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Content</label>
-                        <textarea class="form-control" id="blogContent" name="content" rows="8"></textarea>
+
+                    <div class="mb-3" id="textContainer">
+                        <label for="ai_text_topic" class="form-label">Enter Text Topic</label>
+                        <textarea class="form-control" id="ai_text_topic" name="ai_text_topic" rows="6"
+                            placeholder="Enter your topic text..."></textarea>
                     </div>
+
+                    <div class="mb-3 d-none" id="linkContainer">
+                        <label for="ai_link_topic" class="form-label">Enter Link Topic</label>
+                        <input type="text" class="form-control" id="ai_link_topic" name="ai_link_topic"
+                            placeholder="Enter your link here...">
+                    </div>
+
                     <!-- <div class="mb-3">
                         <label class="form-label">Schedule (optional)</label>
                         <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
                             placeholder="YYYY-MM-DD HH:mm">
                     </div> -->
                     <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="postToWordpress" name="post_to_wordpress">
+                        <input class="form-check-input" type="checkbox" id="postaiToWordpress" name="post_to_wordpress">
                         <label class="form-check-label" for="postToWordpress">Publish to WordPress</label>
                     </div>
                 </div>
@@ -131,6 +145,19 @@
 <script src="https://cdn.ckeditor.com/ckeditor5/40.1.0/classic/ckeditor.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script>
+    document.getElementById("selectTextLink").addEventListener("change", function () {
+        const value = this.value;
+        const textContainer = document.getElementById("textContainer");
+        const linkContainer = document.getElementById("linkContainer");
+
+        if (value === "text") {
+            textContainer.classList.remove("d-none");
+            linkContainer.classList.add("d-none");
+        } else if (value === "link") {
+            linkContainer.classList.remove("d-none");
+            textContainer.classList.add("d-none");
+        }
+    });
     let editor;
     function openBlogModal() {
         document.getElementById('blogForm').reset();
@@ -139,6 +166,13 @@
         // document.getElementById('scheduledAt').value = '';
         document.getElementById('postToWordpress').checked = false;
         document.getElementById('blogForm').action = '/admin/blogs/add';
+    }
+    function openAIBlogModal() {
+        document.getElementById('aiblogForm').reset();
+        document.getElementById('aiblogModalLabel').innerText = 'New AI Blog Post';
+        // document.getElementById('scheduledAt').value = '';
+        document.getElementById('postaiToWordpress').checked = false;
+        document.getElementById('aiblogForm').action = '/admin/ai-blogs/add';
     }
 
     function editBlog(id) {
@@ -171,9 +205,6 @@
             return;
         }
         formData.set('content', content);
-        console.log("dddddddd")
-        console.log(this.action)
-        console.log("dddddddd")
         fetch(this.action, {
             method: this.action.includes('/add') ? 'POST' : 'PUT',
 
@@ -181,6 +212,37 @@
         }).then(response => response.json())
             .then(data => {
                 if (data.type === 'success') {
+                    toastr.success(data.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                // toastr.error('An error occurred while saving the blog post');
+                toastr.error(error.message);
+            });
+    });
+
+    // ai blog form submit
+    document.getElementById('aiblogForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        // formData.set('content', editor.getData());
+        // const content = editor.getData();
+        // if (!content.trim()) {
+        //     toastr.error('Content is required.');
+        //     return;
+        // }
+        // formData.set('content', content);
+        fetch(this.action, {
+            method: this.action.includes('/add') ? 'POST' : 'PUT',
+
+            body: formData
+        }).then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    console.log(data.message);
                     toastr.success(data.message);
                     setTimeout(() => window.location.reload(), 1000);
                 } else {

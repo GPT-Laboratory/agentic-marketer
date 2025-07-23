@@ -9,6 +9,7 @@ from flask import (
     session,
     current_app,
 )
+import re
 from sqlalchemy import func
 from flask_login import login_user, login_required, logout_user, current_user
 from models import (
@@ -314,8 +315,6 @@ def platform_settings():
                 "wp_site_url": request.form.get("wp_site_url"),
                 "wp_username": request.form.get("wp_username"),
                 "wp_app_password": request.form.get("wp_app_password"),
-                
-            
                 # --- LinkedIn ---
                 "linkedin_client_id": request.form.get("linkedin_client_id"),
                 "linkedin_client_secret": request.form.get("linkedin_client_secret"),
@@ -438,7 +437,12 @@ def send_newsletter():
         password = Settings.query.filter_by(key="SMTP_PASSWORD").first().value
     except Exception as e:
         log_error(f"Missing or invalid SMTP settings: {str(e)}")
-        return jsonify({"message": "SMTP settings are missing or invalid.", "type": "error"}), 500
+        return (
+            jsonify(
+                {"message": "SMTP settings are missing or invalid.", "type": "error"}
+            ),
+            500,
+        )
 
     subject = f"📬 Monthly Blog Highlights - {now.strftime('%B %Y')}"
 
@@ -788,6 +792,7 @@ def admin_blogs():
     blogs = Blog.query.order_by(Blog.created_at.desc()).all()
     return render_template("admin/blogs.html", blogs=blogs)
 
+
 @main.route("/admin/blogs/add", methods=["POST"])
 @login_required
 def admin_add_blog():
@@ -816,17 +821,24 @@ def admin_add_blog():
         db.session.rollback()
         return jsonify({"type": "error", "message": str(e)})
 
+
 @main.route("/api/blog/<int:blog_id>", methods=["GET", "PUT"])
 @login_required
 def api_blog(blog_id):
     blog = Blog.query.get_or_404(blog_id)
     if request.method == "GET":
-        return jsonify({
-            "title": blog.title,
-            "content": blog.content,
-            "scheduled_at": blog.scheduled_at.strftime('%Y-%m-%d %H:%M') if blog.scheduled_at else '',
-            "post_to_wordpress": blog.post_to_wordpress,
-        })
+        return jsonify(
+            {
+                "title": blog.title,
+                "content": blog.content,
+                "scheduled_at": (
+                    blog.scheduled_at.strftime("%Y-%m-%d %H:%M")
+                    if blog.scheduled_at
+                    else ""
+                ),
+                "post_to_wordpress": blog.post_to_wordpress,
+            }
+        )
     elif request.method == "PUT":
         try:
             blog.title = request.form.get("title")
@@ -837,14 +849,68 @@ def api_blog(blog_id):
             blog.status = "published" if not scheduled_at else "scheduled"
             db.session.commit()
             # Publish now if needed
-            if blog.status == "published" and blog.post_to_wordpress and not blog.posted_to_wordpress:
+            if (
+                blog.status == "published"
+                and blog.post_to_wordpress
+                and not blog.posted_to_wordpress
+            ):
                 settings = {s.key: s.value for s in Settings.query.all()}
                 post_to_wordpress(blog, settings)
             return jsonify({"type": "success", "message": "Blog post updated."})
         except Exception as e:
             db.session.rollback()
             return jsonify({"type": "error", "message": str(e)})
-        
+
+
+@main.route("/admin/ai-blogs/add", methods=["POST"])
+@login_required
+def admin_add_ai_blog():
+    try:
+        selectTextLink = request.form.get("selectTextLink")
+        ai_text_topic = request.form.get("ai_text_topic")
+        ai_link_topic = request.form.get("ai_link_topic")
+        scheduled_at = request.form.get("scheduled_at")
+        post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
+        status = "published" if not scheduled_at else "scheduled"
+        if selectTextLink == "text":
+            ai_blog = generate_ai_blog(ai_text_topic)
+            
+            # json string to json object
+            ai_blog = json.loads(ai_blog)
+            title = ai_blog[0].headline
+            content = ai_blog[0].content
+        else:
+            # check if ai_link_topic is a valid url
+            if not is_url(ai_link_topic):
+                return jsonify({"type": "error", "message": "Invalid link"})
+            # check if ai_link_topic is youtube link or blog link
+            if "youtube.com" in ai_link_topic or "youtu.be" in ai_link_topic:
+                extracted_text = extract_youtube_text(ai_link_topic)
+            else:
+                extracted_text = extract_webpage_text(ai_link_topic)
+
+            ai_blog = generate_ai_blog(extracted_text)
+            title = ai_blog.headline
+            content = ai_blog.content
+        blog = Blog(
+            title=title,
+            content=content,
+            user_id=current_user.id,
+            scheduled_at=scheduled_at if scheduled_at else None,
+            status=status,
+            post_to_wordpress=post_to_wordpress_flag,
+        )
+        db.session.add(blog)
+        db.session.commit()
+        # Publish now if needed
+        if status == "published" and post_to_wordpress_flag:
+            settings = {s.key: s.value for s in Settings.query.all()}
+            post_to_wordpress(blog, settings)
+        return jsonify({"type": "success", "message": "Blog post created."})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"type": "error", "message": str(e)})
+
 
 @main.route("/api/blog/<int:blog_id>", methods=["POST"])
 @login_required
@@ -854,3 +920,24 @@ def delete_blog(blog_id):
     db.session.commit()
     flash("Blog deleted successfully.", "danger")
     return redirect(url_for("main.admin_blogs"))
+
+
+def generate_ai_blog(content):
+    openai_key = Settings.query.filter_by(key="openai_key").first()
+    client = OpenAI(api_key=openai_key.value)
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a professional blog writer. ",
+            },
+            {"role": "user", "content": f"Topic: {content} \n\n Answer in JSON array format with 'headline' and 'content' keys."},
+        ],
+        temperature=0.8,
+        max_tokens=1500,
+    )
+
+    raw = response.choices[0].message.content
+    return raw
