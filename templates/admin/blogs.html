@@ -8,20 +8,23 @@
 {% block content %}
 <div class="container-fluid">
     <h1 class="h3 mb-4 text-gray-800">Blog Posts</h1>
-    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#blogModal" onclick="openBlogModal()">
-        <i class="fas fa-plus"></i> New Blog Post
-    </button>
-    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal"
-        onclick="openAIBlogModal()">
-        <i class="fas fa-plus"></i> New AI Blog Post
-    </button>
+    <div class="d-flex justify-content-between">
+        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#blogModal"
+            onclick="openBlogModal()">
+            <i class="fas fa-plus"></i> New Blog Post
+        </button>
+        <button class="btn btn-warning mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal"
+            onclick="openAIBlogModal()">
+            <i class="fas fa-plus"></i> New AI Blog Post
+        </button>
+    </div>
     <div class="card shadow mb-4">
         <div class="card-body">
             <table class="table table-bordered">
                 <thead>
                     <tr>
                         <th>Title</th>
-                        <th>Status</th>
+                        <!-- <th>Status</th> -->
                         <th>Scheduled At</th>
                         <th>WordPress</th>
                         <th>Actions</th>
@@ -30,20 +33,23 @@
                 <tbody>
                     {% for blog in blogs %}
                     <tr>
-                        <td>{{ blog.title }}</td>
-                        <td>{{ blog.status }}</td>
+                        <!-- title max 50 characters  -->
+                        <td>{{ blog.title[:50] }}...</td>
+                        <!-- <td>{{ blog.status }}</td> -->
                         <td>{{ blog.scheduled_at or '' }}</td>
                         <td>{% if blog.posted_to_wordpress %}<span class="badge bg-success">Published</span>{% elif
                             blog.post_to_wordpress %}<span class="badge bg-warning">Pending</span>{% else %}-{% endif %}
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-info" onclick="editBlog({{ blog.id }})"><i
-                                    class="fas fa-pencil-alt"></i></button>
+                            <button class="btn btn-sm btn-info" onclick="editBlog({{ blog.id }})">
+                                <i class="fas fa-pencil-alt"></i>
+                            </button>
                             <form action="{{ url_for('main.delete_blog', blog_id=blog.id) }}" method="POST"
-                                class="d-inline" onsubmit="return confirm('Delete this blog?');"><button type="submit"
-                                    class="btn btn-danger btn-sm">
+                                class="d-inline" onsubmit="return confirm('Delete this blog?');">
+                                <button type="submit" class="btn btn-danger btn-sm">
                                     <i class="fas fa-trash"></i>
-                                </button></form>
+                                </button>
+                            </form>
                         </td>
                     </tr>
                     {% endfor %}
@@ -109,13 +115,15 @@
                     </div>
 
                     <div class="mb-3" id="textContainer">
-                        <label for="ai_text_topic" class="form-label">Enter Text Topic</label>
+                        <label for="ai_text_topic" class="form-label">Enter Text Topic <span
+                                class="text-danger">*</span></label>
                         <textarea class="form-control" id="ai_text_topic" name="ai_text_topic" rows="6"
                             placeholder="Enter your topic text..."></textarea>
                     </div>
 
                     <div class="mb-3 d-none" id="linkContainer">
-                        <label for="ai_link_topic" class="form-label">Enter Link Topic</label>
+                        <label for="ai_link_topic" class="form-label">Enter Link Topic <span
+                                class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="ai_link_topic" name="ai_link_topic"
                             placeholder="Enter your link here...">
                     </div>
@@ -228,30 +236,51 @@
     document.getElementById('aiblogForm').addEventListener('submit', function (e) {
         e.preventDefault();
         const formData = new FormData(this);
-        // formData.set('content', editor.getData());
-        // const content = editor.getData();
-        // if (!content.trim()) {
-        //     toastr.error('Content is required.');
-        //     return;
-        // }
-        // formData.set('content', content);
-        fetch(this.action, {
-            method: this.action.includes('/add') ? 'POST' : 'PUT',
 
+        // Validate required fields
+        const selectTextLink = formData.get('selectTextLink');
+        const ai_text_topic = formData.get('ai_text_topic');
+        const ai_link_topic = formData.get('ai_link_topic');
+
+        if (selectTextLink === 'text' && (!ai_text_topic || !ai_text_topic.trim())) {
+            toastr.error('Please enter a topic for AI generation');
+            return;
+        }
+
+        if (selectTextLink === 'link' && (!ai_link_topic || !ai_link_topic.trim())) {
+            toastr.error('Please enter a valid link');
+            return;
+        }
+
+        // Show loading state
+        const submitButton = this.querySelector('button[type="submit"]');
+        const originalButtonText = submitButton.innerHTML;
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+
+        fetch(this.action, {
+            method: 'POST',
             body: formData
         }).then(response => response.json())
             .then(data => {
                 if (data.type === 'success') {
-                    console.log(data.message);
                     toastr.success(data.message);
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('aiblogModal'));
+                    modal.hide();
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     toastr.error(data.message);
                 }
             })
             .catch(error => {
-                // toastr.error('An error occurred while saving the blog post');
-                toastr.error(error.message);
+                console.error('Error:', error);
+                toastr.error('An error occurred while generating the AI blog post');
+            })
+            .finally(() => {
+                // Reset button state
+                submitButton.disabled = false;
+                submitButton.innerHTML = originalButtonText;
             });
     });
 </script>

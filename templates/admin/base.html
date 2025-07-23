@@ -163,7 +163,7 @@
                     <button class="btn btn-link d-md-none me-3" id="sidebarToggle">
                         <i class="fas fa-bars"></i>
                     </button>
-                    <span class="navbar-brand mb-0 h1">{{ settings.get('logo', 'ChatBot') }} Admin</span>
+                    <span class="navbar-brand mb-0 h1">{{ settings.get('logo', 'ChatBot') }}</span>
                     <div class="d-flex align-items-center">
                         <span class="me-3">Welcome, {{ current_user.name }}</span>
                         <a href="{{ url_for('main.admin_logout') }}" class="btn btn-outline-danger btn-sm">

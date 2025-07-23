@@ -872,26 +872,35 @@ def admin_add_ai_blog():
         scheduled_at = request.form.get("scheduled_at")
         post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
         status = "published" if not scheduled_at else "scheduled"
+        
         if selectTextLink == "text":
-            ai_blog = generate_ai_blog(ai_text_topic)
+            if not ai_text_topic or not ai_text_topic.strip():
+                return jsonify({"type": "error", "message": "Please enter a topic for AI generation"})
             
-            # json string to json object
-            ai_blog = json.loads(ai_blog)
-            title = ai_blog[0].headline
-            content = ai_blog[0].content
+            ai_blog = generate_ai_blog(ai_text_topic)
+            title = ai_blog.get("headline", "AI Generated Blog Post")
+            content = ai_blog.get("content", ai_text_topic)
         else:
+            if not ai_link_topic or not ai_link_topic.strip():
+                return jsonify({"type": "error", "message": "Please enter a valid link"})
+            
             # check if ai_link_topic is a valid url
             if not is_url(ai_link_topic):
-                return jsonify({"type": "error", "message": "Invalid link"})
+                return jsonify({"type": "error", "message": "Invalid link format"})
+            
             # check if ai_link_topic is youtube link or blog link
             if "youtube.com" in ai_link_topic or "youtu.be" in ai_link_topic:
                 extracted_text = extract_youtube_text(ai_link_topic)
             else:
                 extracted_text = extract_webpage_text(ai_link_topic)
-
+            
+            if not extracted_text:
+                return jsonify({"type": "error", "message": "Could not extract content from the provided link"})
+            
             ai_blog = generate_ai_blog(extracted_text)
-            title = ai_blog.headline
-            content = ai_blog.content
+            title = ai_blog.get("headline", "AI Generated Blog Post")
+            content = ai_blog.get("content", extracted_text)
+        
         blog = Blog(
             title=title,
             content=content,
@@ -902,28 +911,40 @@ def admin_add_ai_blog():
         )
         db.session.add(blog)
         db.session.commit()
+        
         # Publish now if needed
         if status == "published" and post_to_wordpress_flag:
             settings = {s.key: s.value for s in Settings.query.all()}
             post_to_wordpress(blog, settings)
-        return jsonify({"type": "success", "message": "Blog post created."})
+        
+        return jsonify({"type": "success", "message": "AI blog post created successfully."})
     except Exception as e:
         db.session.rollback()
-        return jsonify({"type": "error", "message": str(e)})
+        log_error(f"Error creating AI blog post: {str(e)}")
+        return jsonify({"type": "error", "message": f"Error creating blog post: {str(e)}"})
 
 
 @main.route("/api/blog/<int:blog_id>", methods=["POST"])
 @login_required
 def delete_blog(blog_id):
-    blog = Blog.query.get_or_404(blog_id)
-    db.session.delete(blog)
-    db.session.commit()
-    flash("Blog deleted successfully.", "danger")
-    return redirect(url_for("main.admin_blogs"))
+    try:
+        blog = Blog.query.get_or_404(blog_id)
+        db.session.delete(blog)
+        db.session.commit()
+        flash("Blog deleted successfully.", "success")
+        return redirect(url_for("main.admin_blogs"))
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error deleting blog {blog_id}: {str(e)}")
+        flash("Error deleting blog.", "error")
+        return redirect(url_for("main.admin_blogs"))
 
 
 def generate_ai_blog(content):
     openai_key = Settings.query.filter_by(key="openai_key").first()
+    if not openai_key or not openai_key.value:
+        raise Exception("OpenAI API key not configured")
+    
     client = OpenAI(api_key=openai_key.value)
 
     response = client.chat.completions.create(
@@ -931,13 +952,40 @@ def generate_ai_blog(content):
         messages=[
             {
                 "role": "system",
-                "content": "You are a professional blog writer. ",
+                "content": "You are a professional blog writer. Generate engaging blog content with a catchy headline and well-structured content.",
             },
-            {"role": "user", "content": f"Topic: {content} \n\n Answer in JSON array format with 'headline' and 'content' keys."},
+            {"role": "user", "content": f"Topic: {content} \n\n Generate a blog post in JSON format with 'headline' and 'content' keys. The content should be in HTML format with proper paragraphs and formatting."},
         ],
         temperature=0.8,
-        max_tokens=1500,
+        max_tokens=2000,
     )
 
     raw = response.choices[0].message.content
-    return raw
+    try:
+        # Try to parse as JSON
+        parsed = json.loads(raw)
+        return parsed
+    except json.JSONDecodeError:
+        # If JSON parsing fails, try to extract headline and content from the response
+        lines = raw.split('\n')
+        headline = ""
+        content = ""
+        in_content = False
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('"headline"') or line.startswith("'headline'"):
+                headline = line.split(':', 1)[1].strip().strip('",\'')
+            elif line.startswith('"content"') or line.startswith("'content'"):
+                in_content = True
+                content_part = line.split(':', 1)[1].strip().strip('",\'')
+                content += content_part
+            elif in_content and line:
+                content += line
+        
+        if not headline or not content:
+            # Fallback: use the raw response as content
+            headline = "AI Generated Blog Post"
+            content = raw
+        
+        return {"headline": headline, "content": content}
