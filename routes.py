@@ -919,14 +919,23 @@ def admin_add_blog():
     try:
         title = request.form.get("title")
         content = request.form.get("content")
-        scheduled_at = request.form.get("scheduled_at")
+        scheduled_at_str = request.form.get("scheduled_at")
         post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
+        
+        # Parse scheduled_at datetime
+        scheduled_at = None
+        if scheduled_at_str and scheduled_at_str.strip():
+            try:
+                scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+            except ValueError:
+                return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
+        
         status = "published" if not scheduled_at else "scheduled"
         blog = Blog(
             title=title,
             content=content,
             user_id=current_user.id,
-            scheduled_at=scheduled_at if scheduled_at else None,
+            scheduled_at=scheduled_at,
             status=status,
             post_to_wordpress=post_to_wordpress_flag,
         )
@@ -963,8 +972,17 @@ def api_blog(blog_id):
         try:
             blog.title = request.form.get("title")
             blog.content = request.form.get("content")
-            scheduled_at = request.form.get("scheduled_at")
-            blog.scheduled_at = scheduled_at if scheduled_at else None
+            scheduled_at_str = request.form.get("scheduled_at")
+            
+            # Parse scheduled_at datetime
+            scheduled_at = None
+            if scheduled_at_str and scheduled_at_str.strip():
+                try:
+                    scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+                except ValueError:
+                    return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
+            
+            blog.scheduled_at = scheduled_at
             blog.post_to_wordpress = bool(request.form.get("post_to_wordpress"))
             blog.status = "published" if not scheduled_at else "scheduled"
             db.session.commit()
@@ -989,8 +1007,17 @@ def admin_add_ai_blog():
         selectTextLink = request.form.get("selectTextLink")
         ai_text_topic = request.form.get("ai_text_topic")
         ai_link_topic = request.form.get("ai_link_topic")
-        scheduled_at = request.form.get("scheduled_at")
+        scheduled_at_str = request.form.get("scheduled_at")
         post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
+        
+        # Parse scheduled_at datetime
+        scheduled_at = None
+        if scheduled_at_str and scheduled_at_str.strip():
+            try:
+                scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+            except ValueError:
+                return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
+        
         status = "published" if not scheduled_at else "scheduled"
         
         if selectTextLink == "text":
@@ -1025,7 +1052,7 @@ def admin_add_ai_blog():
             title=title,
             content=content,
             user_id=current_user.id,
-            scheduled_at=scheduled_at if scheduled_at else None,
+            scheduled_at=scheduled_at,
             status=status,
             post_to_wordpress=post_to_wordpress_flag,
         )

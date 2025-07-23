@@ -77,11 +77,11 @@
                         <label class="form-label">Content</label>
                         <textarea class="form-control" id="blogContent" name="content" rows="8"></textarea>
                     </div>
-                    <!-- <div class="mb-3">
+                    <div class="mb-3">
                         <label class="form-label">Schedule (optional)</label>
                         <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
                             placeholder="YYYY-MM-DD HH:mm">
-                    </div> -->
+                    </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="postToWordpress" name="post_to_wordpress">
                         <label class="form-check-label" for="postToWordpress">Publish to WordPress</label>
@@ -128,14 +128,14 @@
                             placeholder="Enter your link here...">
                     </div>
 
-                    <!-- <div class="mb-3">
+                    <div class="mb-3">
                         <label class="form-label">Schedule (optional)</label>
-                        <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
+                        <input type="text" class="form-control" id="aiScheduledAt" name="scheduled_at"
                             placeholder="YYYY-MM-DD HH:mm">
-                    </div> -->
+                    </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="postaiToWordpress" name="post_to_wordpress">
-                        <label class="form-check-label" for="postToWordpress">Publish to WordPress</label>
+                        <label class="form-check-label" for="postaiToWordpress">Publish to WordPress</label>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -189,7 +189,7 @@
             .then(data => {
                 document.getElementById('blogTitle').value = data.title;
                 if (editor) editor.setData(data.content);
-                // document.getElementById('scheduledAt').value = data.scheduled_at || '';
+                document.getElementById('scheduledAt').value = data.scheduled_at || '';
                 document.getElementById('postToWordpress').checked = data.post_to_wordpress;
                 document.getElementById('blogModalLabel').innerText = 'Edit Blog Post';
                 document.getElementById('blogForm').action = `/api/blog/${id}`;
@@ -201,21 +201,28 @@
         .then(newEditor => { editor = newEditor; })
         .catch(error => { console.error(error); });
 
+    // Initialize flatpickr for both scheduling fields
     flatpickr('#scheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });
+    flatpickr('#aiScheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });
 
     document.getElementById('blogForm').addEventListener('submit', function (e) {
         e.preventDefault();
         const formData = new FormData(this);
-        formData.set('content', editor.getData());
         const content = editor.getData();
         if (!content.trim()) {
             toastr.error('Content is required.');
             return;
         }
         formData.set('content', content);
+        
+        // Add scheduled_at to form data
+        const scheduledAt = document.getElementById('scheduledAt').value;
+        if (scheduledAt) {
+            formData.set('scheduled_at', scheduledAt);
+        }
+        
         fetch(this.action, {
             method: this.action.includes('/add') ? 'POST' : 'PUT',
-
             body: formData
         }).then(response => response.json())
             .then(data => {
@@ -227,7 +234,6 @@
                 }
             })
             .catch(error => {
-                // toastr.error('An error occurred while saving the blog post');
                 toastr.error(error.message);
             });
     });
@@ -252,6 +258,12 @@
             return;
         }
 
+        // Add scheduled_at to form data
+        const aiScheduledAt = document.getElementById('aiScheduledAt').value;
+        if (aiScheduledAt) {
+            formData.set('scheduled_at', aiScheduledAt);
+        }
+
         // Show loading state
         const submitButton = this.querySelector('button[type="submit"]');
         const originalButtonText = submitButton.innerHTML;
@@ -265,7 +277,6 @@
             .then(data => {
                 if (data.type === 'success') {
                     toastr.success(data.message);
-                    // Close modal
                     const modal = bootstrap.Modal.getInstance(document.getElementById('aiblogModal'));
                     modal.hide();
                     setTimeout(() => window.location.reload(), 1000);
@@ -278,7 +289,6 @@
                 toastr.error('An error occurred while generating the AI blog post');
             })
             .finally(() => {
-                // Reset button state
                 submitButton.disabled = false;
                 submitButton.innerHTML = originalButtonText;
             });
