@@ -23,7 +23,7 @@ def create_app(config_name='default'):
     login_manager.init_app(app)
     
     # Import models after db initialization
-    from models import User, Role, FAQ, File, Query, Settings, NewQuestion
+    from models import User, Role, FAQ, Settings, Blog, LinkedInPost, TwitterPost
     
     @login_manager.user_loader
     def load_user(user_id):

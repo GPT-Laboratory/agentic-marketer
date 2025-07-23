@@ -11,7 +11,17 @@ from flask import (
 )
 from sqlalchemy import func
 from flask_login import login_user, login_required, logout_user, current_user
-from models import db, User, Role, FAQ, File, Query, Settings, NewQuestion
+from models import (
+    db,
+    User,
+    Role,
+    FAQ,
+    Settings,
+    Blog,
+    LinkedInPost,
+    TwitterPost,
+    NewsletterEmail,
+)
 from urllib.parse import urlparse
 
 from werkzeug.security import generate_password_hash
@@ -35,6 +45,10 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 from pathlib import Path
 from werkzeug.utils import secure_filename
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 
 # Create blueprint
 main = Blueprint("main", __name__)
@@ -70,22 +84,11 @@ def chat():
         return jsonify({"error": "No question provided", "type": "error"}), 400
 
     try:
-        def save_query(answer_found=True, answer=None):
-            query = Query(
-                question=question,
-                answer=answer,
-                answer_found=answer_found,
-                happy=True,
-                language=language,
-            )
-            db.session.add(query)
-            db.session.commit()
-            return query
 
         # 1. Check if exact match exists in FAQ
         faq = FAQ.query.filter(func.lower(FAQ.question) == question.lower()).first()
         if faq:
-            query = save_query(answer=faq.answer)
+
             return jsonify(
                 {
                     "answer": faq.answer,
@@ -108,48 +111,12 @@ def chat():
                 400,
             )
 
-        # 3. Search across file embeddings
-        files = File.query.all()
-        file_ids = [f.file_identifier for f in files if f.file_identifier]
-        file_id_to_title = {
-            f.file_identifier: f.original_filename for f in files if f.file_identifier
-        }
-
-        if not file_ids:
-            return handle_no_content(question, language)
-
-        results = search_across_indices(question, file_ids, top_k=5)
-        if not results:
-            # Save query with answer_found=False and return no content message
-            message = {
-                "fi": "Valitettavasti en löytänyt vastausta kysymykseesi. Olen tallentanut sen ja tiimimme tarkistaa sen.",
-                "en": "I'm sorry, I couldn't find a specific answer to your question. I've noted it down and our team will review it.",
-            }.get(language, "en")
-            
-            query = save_query(answer_found=False, answer=message)
-            
-            # Create new question for review
-            new_question = NewQuestion(question=question)
-            db.session.add(new_question)
-            db.session.commit()
-            
-            return jsonify({"answer": message, "type": "info", "query_id": query.id})
-
-        # 4. Build context from results
-        context = "\n\n".join(
-            [
-                f"Relevant content from {file_id_to_title[r['file_id']]}:\n{r['chunk']}"
-                for r in results
-                if r["file_id"] in file_id_to_title
-            ]
-        )
-
-        # 5. Generate answer via OpenAI
+            # 5. Generate answer via OpenAI
         system_prompt = {
             "en": "You are a helpful assistant. Use the following context to answer the question in English. If the context doesn't contain enough information to answer the question, say so:",
             "fi": "Olet avulias assistentti. Käytä seuraavaa kontekstia vastataksesi kysymykseen suomeksi. Jos kontekstissa ei ole tarpeeksi tietoa vastataksesi kysymykseen, kerro niin:",
         }
-
+        context = ""
         client = OpenAI(api_key=openai_key.value)
         response = client.chat.completions.create(
             model="gpt-4",
@@ -169,27 +136,11 @@ def chat():
 
         answer = response.choices[0].message.content
 
-        # 6. Save query with the generated answer
-        query = save_query(answer=answer)
-
-        return jsonify({"answer": answer, "type": "success", "query_id": query.id})
+        return jsonify({"answer": answer, "type": "success"})
 
     except Exception as e:
         print(f"Error in chat route: {str(e)}")
         return jsonify({"error": str(e), "type": "error"}), 500
-
-
-def handle_no_content(question, language):
-    new_question = NewQuestion(question=question)
-    db.session.add(new_question)
-    db.session.commit()
-
-    message = {
-        "fi": "Valitettavasti en löytänyt vastausta kysymykseesi. Olen tallentanut sen ja tiimimme tarkistaa sen.",
-        "en": "I'm sorry, I couldn't find a specific answer to your question. I've noted it down and our team will review it.",
-    }.get(language, language["en"])
-
-    return jsonify({"answer": message, "type": "info"})
 
 
 # Admin routes
@@ -219,20 +170,14 @@ def admin_logout():
 @main.route("/admin")
 @login_required
 def admin_dashboard():
-    # Regenerate any missing embeddings
-    regenerate_missing_embeddings()
 
     users = User.query.all()
     faqs = FAQ.query.all()
-    files = File.query.all()
-    new_questions = NewQuestion.query.order_by(NewQuestion.created_at.desc()).all()
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
         "admin/dashboard.html",
         users=users,
         faqs=faqs,
-        files=files,
-        new_questions=new_questions,
         settings=settings,
     )
 
@@ -281,29 +226,13 @@ def admin_faqs():
     return render_template("admin/faqs.html", faqs=faqs, settings=settings)
 
 
-@main.route("/admin/files")
-@login_required
-def admin_files():
-    files = File.query.all()
-    settings = {s.key: s.value for s in Settings.query.all()}
-    return render_template("admin/files.html", files=files, settings=settings)
-
-
-@main.route("/admin/queries")
-@login_required
-def admin_queries():
-    queries = Query.query.all()
-    settings = {s.key: s.value for s in Settings.query.all()}
-    return render_template("admin/queries.html", queries=queries, settings=settings)
-
-
 @main.route("/admin/settings", methods=["GET", "POST"])
 @login_required
 def admin_settings():
     if request.method == "POST":
         try:
             # Handle file uploads
-            upload_dir = os.path.join(current_app.static_folder, 'uploads')
+            upload_dir = os.path.join(current_app.static_folder, "uploads")
             os.makedirs(upload_dir, exist_ok=True)
 
             settings_to_update = {
@@ -315,34 +244,34 @@ def admin_settings():
             }
 
             # Handle logo file upload
-            logo_file = request.files.get('logo_file')
+            logo_file = request.files.get("logo_file")
             if logo_file and logo_file.filename:
                 # Delete old logo if exists
-                old_logo = Settings.query.filter_by(key='logo_file').first()
+                old_logo = Settings.query.filter_by(key="logo_file").first()
                 if old_logo and old_logo.value:
                     old_logo_path = os.path.join(upload_dir, old_logo.value)
                     if os.path.exists(old_logo_path):
                         os.remove(old_logo_path)
-                
+
                 # Save new logo
                 filename = secure_filename(logo_file.filename)
                 logo_file.save(os.path.join(upload_dir, filename))
-                settings_to_update['logo_file'] = filename
+                settings_to_update["logo_file"] = filename
 
             # Handle favicon file upload
-            favicon_file = request.files.get('favicon_file')
+            favicon_file = request.files.get("favicon_file")
             if favicon_file and favicon_file.filename:
                 # Delete old favicon if exists
-                old_favicon = Settings.query.filter_by(key='favicon_file').first()
+                old_favicon = Settings.query.filter_by(key="favicon_file").first()
                 if old_favicon and old_favicon.value:
                     old_favicon_path = os.path.join(upload_dir, old_favicon.value)
                     if os.path.exists(old_favicon_path):
                         os.remove(old_favicon_path)
-                
+
                 # Save new favicon
                 filename = secure_filename(favicon_file.filename)
                 favicon_file.save(os.path.join(upload_dir, filename))
-                settings_to_update['favicon_file'] = filename
+                settings_to_update["favicon_file"] = filename
 
             for key, value in settings_to_update.items():
                 setting = Settings.query.filter_by(key=key).first()
@@ -368,38 +297,170 @@ def admin_settings():
     return render_template("admin/settings.html", settings=settings)
 
 
-@main.route("/admin/new-questions")
+@main.route("/admin/platform-settings", methods=["GET", "POST"])
 @login_required
-def admin_new_questions():
-    new_questions = NewQuestion.query.order_by(NewQuestion.created_at.desc()).all()
+def platform_settings():
+    if request.method == "POST":
+        try:
+
+            settings_to_update = {
+                # --- WordPress ---
+                "wp_client_id": request.form.get("wp_client_id"),
+                "wp_client_secret": request.form.get("wp_client_secret"),
+                "wp_redirect_uri": request.form.get("wp_redirect_uri"),
+                "wp_site_url": request.form.get("wp_site_url"),
+                "wp_auth_code": request.form.get("wp_auth_code"),
+                "wp_access_token": request.form.get("wp_access_token"),
+                "wp_refresh_token": request.form.get("wp_refresh_token"),
+                # --- LinkedIn ---
+                "linkedin_client_id": request.form.get("linkedin_client_id"),
+                "linkedin_client_secret": request.form.get("linkedin_client_secret"),
+                "linkedin_redirect_uri": request.form.get("linkedin_redirect_uri"),
+                "linkedin_org_id": request.form.get("linkedin_org_id"),
+                "linkedin_auth_code": request.form.get("linkedin_auth_code"),
+                "linkedin_access_token": request.form.get("linkedin_access_token"),
+                "linkedin_refresh_token": request.form.get("linkedin_refresh_token"),
+                # --- X (Twitter) ---
+                "x_api_key": request.form.get("x_api_key"),
+                "x_api_secret": request.form.get("x_api_secret"),
+                "x_access_token": request.form.get("x_access_token"),
+                "x_access_token_secret": request.form.get("x_access_token_secret"),
+            }
+
+            for key, value in settings_to_update.items():
+                setting = Settings.query.filter_by(key=key).first()
+                if setting:
+                    setting.value = value
+                else:
+                    setting = Settings(key=key, value=value)
+                    db.session.add(setting)
+
+            db.session.commit()
+            return jsonify(
+                {"message": "Settings updated successfully", "type": "success"}
+            )
+        except Exception as e:
+            return (
+                jsonify(
+                    {"message": f"Error updating settings: {str(e)}", "type": "error"}
+                ),
+                500,
+            )
+
+    settings = {s.key: s.value for s in Settings.query.all()}
+    return render_template("admin/platform-setting.html", settings=settings)
+
+
+@main.route("/admin/newsletter-emails")
+@login_required
+def admin_newsletter_emails():
+    emails = NewsletterEmail.query.order_by(NewsletterEmail.created_at.desc()).all()
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
-        "admin/new_questions.html", new_questions=new_questions, settings=settings
+        "admin/newsletter_emails.html", emails=emails, settings=settings
     )
 
 
-@main.route("/api/new-question/<int:id>/answer", methods=["POST"])
+@main.route("/admin/newsletter-emails/add", methods=["POST"])
 @login_required
-def api_answer_new_question(id):
-    try:
-        new_question = NewQuestion.query.get_or_404(id)
-        answer = request.form.get("answer")
+def add_newsletter_email():
+    email = request.form.get("email")
+    if email:
+        existing = NewsletterEmail.query.filter_by(email=email).first()
+        if existing:
+            flash("Email already exists.", "warning")
+        else:
+            new_email = NewsletterEmail(email=email)
+            db.session.add(new_email)
+            db.session.commit()
+            flash("Email added successfully.", "success")
+    return redirect(url_for("main.admin_newsletter_emails"))
 
-        if not answer:
-            return jsonify({"message": "Answer is required", "type": "error"}), 400
 
-        # Create new FAQ
-        faq = FAQ(question=new_question.question, answer=answer)
-        db.session.add(faq)
+@main.route("/admin/newsletter-emails/toggle/<int:email_id>")
+@login_required
+def toggle_newsletter_email(email_id):
+    email_entry = NewsletterEmail.query.get_or_404(email_id)
+    email_entry.is_active = not email_entry.is_active
+    db.session.commit()
+    flash(
+        f"Email {'activated' if email_entry.is_active else 'deactivated'} successfully.",
+        "info",
+    )
+    return redirect(url_for("main.admin_newsletter_emails"))
 
-        # Delete the new question
-        db.session.delete(new_question)
-        db.session.commit()
 
-        return jsonify({"message": "Question answered and added to FAQs", "type": "success"})
-    except Exception as e:
-        print(f"Error in api_answer_new_question: {str(e)}")
-        return jsonify({"message": str(e), "type": "error"}), 500
+@main.route("/admin/newsletter-emails/delete/<int:email_id>", methods=["POST"])
+@login_required
+def delete_newsletter_email(email_id):
+    email_entry = NewsletterEmail.query.get_or_404(email_id)
+    db.session.delete(email_entry)
+    db.session.commit()
+    flash("Email deleted successfully.", "danger")
+    return redirect(url_for("main.admin_newsletter_emails"))
+
+
+@main.route("/send-newsletter")
+def send_newsletter():
+    # Step 1: Get current month's blog posts
+    now = datetime.utcnow()
+    start_date = datetime(now.year, now.month, 1)
+    blogs = Blog.query.filter(
+        Blog.created_at >= start_date, Blog.status == "published"
+    ).all()
+
+    if not blogs:
+        return jsonify({"message": "No blog posts found for this month."}), 404
+
+    # Step 2: Build email content
+    welcome = "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+    post_html = ""
+    for post in blogs:
+        snippet = (
+            post.content[:150] + "..." if len(post.content) > 150 else post.content
+        )
+        url = f"https://yourwebsite.com/blog/{post.id}"  # Adjust this URL to match your route
+        post_html += (
+            f"<p><strong><a href='{url}'>{post.title}</a></strong><br>{snippet}</p><hr>"
+        )
+
+    email_body = welcome + post_html
+
+    # Step 3: SMTP settings
+    smtp_server = Settings.query.filter_by(key="SMTP_SERVER").first().value
+    port = int(Settings.query.filter_by(key="SMTP_PORT").first().value)
+    sender_email = Settings.query.filter_by(key="SMTP_USERNAME").first().value
+    password = Settings.query.filter_by(key="SMTP_PASSWORD").first().value
+
+    subject = f"📬 Monthly Blog Highlights - {now.strftime('%B %Y')}"
+
+    # Step 4: Send email to each active subscriber
+    active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
+    success, failed = 0, 0
+
+    for email_entry in active_emails:
+        receiver_email = email_entry.email
+        message = MIMEMultipart()
+        message["From"] = sender_email
+        message["To"] = receiver_email
+        message["Subject"] = subject
+        message.attach(MIMEText(email_body, "html"))
+
+        try:
+            with smtplib.SMTP_SSL(smtp_server, port) as server:
+                server.login(sender_email, password)
+                server.sendmail(sender_email, receiver_email, message.as_string())
+            success += 1
+        except Exception as e:
+            print(f"❌ Error sending to {receiver_email}: {e}")
+            failed += 1
+
+    return jsonify(
+        {
+            "message": f"✅ Newsletter sent to {success} users, failed for {failed}.",
+            "month": now.strftime("%B %Y"),
+        }
+    )
 
 
 # API routes for CRUD operations
@@ -507,21 +568,23 @@ def api_create_faq():
             # Handle JSON request (from query conversion)
             data = request.get_json()
             if not data or "question" not in data or "answer" not in data:
-                return jsonify({"type": "error", "message": "Question and answer are required"}), 400
+                return (
+                    jsonify(
+                        {"type": "error", "message": "Question and answer are required"}
+                    ),
+                    400,
+                )
 
             # Create new FAQ
-            faq = FAQ(
-                question=data["question"],
-                answer=data["answer"]
-            )
+            faq = FAQ(question=data["question"], answer=data["answer"])
             db.session.add(faq)
-            
+
             # If query_id is provided, delete the query
             if "query_id" in data:
                 query = Query.query.get(data["query_id"])
                 if query:
                     db.session.delete(query)
-            
+
             db.session.commit()
             return jsonify({"type": "success", "message": "FAQ created successfully"})
         else:
@@ -530,7 +593,12 @@ def api_create_faq():
             answer = request.form.get("answer")
 
             if not all([question, answer]):
-                return jsonify({"message": "Question and answer are required", "type": "error"}), 400
+                return (
+                    jsonify(
+                        {"message": "Question and answer are required", "type": "error"}
+                    ),
+                    400,
+                )
 
             # Create FAQ record
             faq = FAQ(question=question, answer=answer)
@@ -671,288 +739,6 @@ def extract_webpage_text(url):
         return None
 
 
-def generate_filename(source, content=None):
-    """Generate a unique filename based on the source type and content."""
-    try:
-        # Get current time for uniqueness
-        current_time = datetime.now().strftime("%H%M")
-
-        if isinstance(source, str):  # URL or raw text
-            if source.startswith(("http://", "https://")):
-                # For URLs, use the URL itself as the base name
-                parsed_url = urlparse(source)
-                # Remove protocol and www
-                domain = parsed_url.netloc.replace("www.", "")
-                # Get path and remove leading/trailing slashes
-                path = parsed_url.path.strip("/")
-                # Combine domain and path, replace slashes with underscores
-                url_name = f"{domain}_{path}".replace("/", "_")
-                # Make it safe for filenames
-                safe_name = re.sub(r"[^\w\s-]", "", url_name)
-                safe_name = re.sub(r"[-\s]+", "_", safe_name)
-                return f"url_{safe_name}_{current_time}"
-            else:
-                # For raw text, use first line or generate random name
-                if content:
-                    first_line = content.split("\n")[0][:50].strip()
-                    if first_line:
-                        # Clean the first line to make it filename-safe
-                        safe_name = re.sub(r"[^\w\s-]", "", first_line)
-                        safe_name = re.sub(r"[-\s]+", "_", safe_name)
-                        return f"text_{safe_name}_{current_time}"
-                return f"text_{current_time}"
-        else:  # File upload
-            # Keep original filename but add timestamp
-            original_name = os.path.splitext(source.filename)[0]
-            extension = os.path.splitext(source.filename)[1]
-            safe_name = re.sub(r"[^\w\s-]", "", original_name)
-            safe_name = re.sub(r"[-\s]+", "_", safe_name)
-            return f"{safe_name}_{current_time}{extension}"
-    except Exception as e:
-        print(f"Error generating filename: {str(e)}")
-        return f"file_{current_time}"
-
-
-def check_duplicate_filenames(files):
-    """Check if any of the files already exist and return list of duplicate filenames."""
-    duplicate_files = []
-    for file in files:
-        original_name = os.path.splitext(file.filename)[0]
-        extension = os.path.splitext(file.filename)[1]
-        safe_name = re.sub(r"[^\w\s-]", "", original_name)
-        safe_name = re.sub(r"[-\s]+", "_", safe_name)
-        base_filename = f"{safe_name}_"
-
-        # Check if any existing file starts with this base filename
-        existing = File.query.filter(
-            File.original_filename.like(f"{base_filename}%")
-        ).first()
-        if existing:
-            duplicate_files.append(
-                {"original": file.filename, "existing": existing.original_filename}
-            )
-
-    return duplicate_files
-
-
-def check_duplicate_url(url):
-    """Check if a URL has already been processed."""
-    try:
-        # Normalize the URL by removing protocol and www
-        parsed_url = urlparse(url)
-        normalized_url = parsed_url.netloc.replace("www.", "") + parsed_url.path.rstrip(
-            "/"
-        )
-
-        # Get all files that were created from URLs
-        url_files = File.query.filter(File.original_filename.like("url_%")).all()
-
-        for file in url_files:
-            # Extract the URL part from the filename
-            filename_parts = file.original_filename.split("_")
-            if len(filename_parts) >= 3:  # url_domain_path_timestamp
-                stored_url = "_".join(
-                    filename_parts[1:-1]
-                )  # Remove 'url_' prefix and timestamp
-                if stored_url == normalized_url:
-                    return True, file.original_filename
-
-        return False, None
-    except Exception as e:
-        print(f"Error checking duplicate URL: {str(e)}")
-        return False, None
-
-
-@main.route("/api/file", methods=["POST"])
-@login_required
-def api_upload_file():
-    try:
-        upload_type = request.form.get("uploadType")
-        print("Upload Type:", upload_type)
-        print("Request form data:", request.form)
-        print("Request files:", request.files)
-
-        if upload_type == "file":
-            files = request.files.getlist("file")
-            if not files or files[0].filename == "":
-                return jsonify({"message": "No files selected", "type": "error"}), 400
-
-            # Check for duplicate filenames first
-            duplicate_files = check_duplicate_filenames(files)
-            if duplicate_files:
-                # Create a detailed error message listing all duplicates
-                error_message = "The following files already exist:\n"
-                for dup in duplicate_files:
-                    error_message += (
-                        f"- {dup['original']} (exists as: {dup['existing']})\n"
-                    )
-                return jsonify({"message": error_message, "type": "error"}), 400
-
-            success_count = 0
-            error_messages = []
-
-            for file in files:
-                try:
-                    text = extract_text_from_file(file)
-                    if not text:
-                        error_messages.append(
-                            f"Could not extract text from {file.filename}"
-                        )
-                        continue
-
-                    file_identifier = generate_and_store_embeddings(text)
-                    if not file_identifier:
-                        error_messages.append(
-                            f"Failed to generate embeddings for {file.filename}"
-                        )
-                        continue
-
-                    filename = generate_filename(file, text)
-
-                    db_file = File(
-                        text=text,
-                        user_id=current_user.id,
-                        file_identifier=file_identifier,
-                        original_filename=filename,
-                    )
-                    db.session.add(db_file)
-                    success_count += 1
-                except Exception as e:
-                    error_messages.append(f"Error processing {file.filename}: {str(e)}")
-                    continue
-
-            if success_count > 0:
-                db.session.commit()
-                message = f"Successfully processed {success_count} file(s)"
-                if error_messages:
-                    message += f". Failed to process {len(error_messages)} file(s): {', '.join(error_messages)}"
-                return jsonify({"message": message, "type": "success"})
-            else:
-                return (
-                    jsonify(
-                        {
-                            "message": "Failed to process any files: "
-                            + ", ".join(error_messages),
-                            "type": "error",
-                        }
-                    ),
-                    400,
-                )
-
-        elif upload_type == "url":
-            url = request.form.get("url", "").strip()
-            if not url:
-                return jsonify({"message": "No URL provided", "type": "error"}), 400
-
-            # Check for duplicate URL
-            is_duplicate, existing_file = check_duplicate_url(url)
-            if is_duplicate:
-                return (
-                    jsonify(
-                        {
-                            "message": f"This URL has already been processed (stored as: {existing_file})",
-                            "type": "error",
-                        }
-                    ),
-                    400,
-                )
-
-            print(f"Processing URL: {url}")
-            text = extract_text_from_file(url)
-            if not text:
-                return (
-                    jsonify(
-                        {"message": "Could not extract text from URL", "type": "error"}
-                    ),
-                    400,
-                )
-
-            file_identifier = generate_and_store_embeddings(text)
-            if not file_identifier:
-                return (
-                    jsonify(
-                        {"message": "Failed to generate embeddings", "type": "error"}
-                    ),
-                    500,
-                )
-
-            filename = generate_filename(url, text)
-
-            db_file = File(
-                text=text,
-                user_id=current_user.id,
-                file_identifier=file_identifier,
-                original_filename=filename,
-            )
-            db.session.add(db_file)
-            db.session.commit()
-
-            return jsonify(
-                {"message": "URL content processed successfully", "type": "success"}
-            )
-
-        elif upload_type == "text":
-            text = request.form.get("text", "").strip()
-            if not text:
-                return jsonify({"message": "No text provided", "type": "error"}), 400
-
-            file_identifier = generate_and_store_embeddings(text)
-            if not file_identifier:
-                return (
-                    jsonify(
-                        {"message": "Failed to generate embeddings", "type": "error"}
-                    ),
-                    500,
-                )
-
-            filename = generate_filename(text, text)
-
-            db_file = File(
-                text=text,
-                user_id=current_user.id,
-                file_identifier=file_identifier,
-                original_filename=filename,
-            )
-            db.session.add(db_file)
-            db.session.commit()
-
-            return jsonify(
-                {"message": "Text content processed successfully", "type": "success"}
-            )
-
-        else:
-            return (
-                jsonify({"message": "Invalid upload type provided", "type": "error"}),
-                400,
-            )
-
-    except Exception as e:
-        print(f"Error in api_upload_file: {str(e)}")
-        return jsonify({"message": str(e), "type": "error"}), 500
-
-
-def get_file_paths(file_identifier):
-    """Get all associated file paths for a given file identifier."""
-    base_path = os.path.join("dataembedding", file_identifier)
-    return {
-        "json": f"{base_path}_chunks.json",
-        "numpy": f"{base_path}_embeddings.npy",
-        "faiss": f"{base_path}.faiss",
-    }
-
-
-def delete_associated_files(file_identifier):
-    """Delete all associated files for a given file identifier."""
-    try:
-        file_paths = get_file_paths(file_identifier)
-        for file_path in file_paths.values():
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                print(f"Deleted associated file: {file_path}")
-    except Exception as e:
-        print(f"Error deleting associated files: {str(e)}")
-
-
 @main.route("/api/faq/<int:faq_id>", methods=["PUT", "DELETE"])
 @login_required
 def api_manage_faq(faq_id):
@@ -986,195 +772,3 @@ def api_manage_faq(faq_id):
         db.session.rollback()
         print(f"Error managing FAQ: {e}")
         return jsonify({"error": str(e)}), 500
-
-
-@main.route("/api/file/<int:id>", methods=["DELETE"])
-@login_required
-def api_delete_file(id):
-    try:
-        file = File.query.get_or_404(id)
-
-        # Delete associated files
-        delete_associated_files(file.file_identifier)
-
-        # Delete from database
-        db.session.delete(file)
-        db.session.commit()
-
-        return jsonify(
-            {
-                "message": "File and associated data deleted successfully",
-                "type": "success",
-            }
-        )
-    except Exception as e:
-        return jsonify({"message": str(e), "type": "error"}), 500
-
-
-@main.route("/api/query/<int:id>", methods=["DELETE"])
-@login_required
-def api_delete_query(id):
-    try:
-        query = Query.query.get_or_404(id)
-        db.session.delete(query)
-        db.session.commit()
-        return jsonify({"message": "Query deleted successfully", "type": "success"})
-    except Exception as e:
-        return jsonify({"message": str(e), "type": "error"}), 500
-
-
-@main.route("/api/new-question/<int:id>", methods=["DELETE"])
-@login_required
-def api_delete_new_question(id):
-    try:
-        new_question = NewQuestion.query.get_or_404(id)
-
-        # Delete associated files
-        file_identifier = f"new_question_{new_question.id}"
-        delete_associated_files(file_identifier)
-
-        # Delete from database
-        db.session.delete(new_question)
-        db.session.commit()
-
-        return jsonify(
-            {
-                "message": "Question and associated files deleted successfully",
-                "type": "success",
-            }
-        )
-    except Exception as e:
-        return jsonify({"message": str(e), "type": "error"}), 500
-
-
-@main.route("/api/queries/delete-all", methods=["DELETE"])
-@login_required
-def api_delete_all_queries():
-    try:
-        # Delete all queries
-        Query.query.delete()
-        db.session.commit()
-        return jsonify({"message": "All queries deleted successfully"})
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error deleting all queries: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@main.route("/api/chat/<int:query_id>/feedback", methods=["POST"])
-def chat_feedback(query_id):
-    try:
-        data = request.get_json()
-        feedback = data.get("feedback")
-        message = data.get("message")
-        language = data.get("language", "en")
-
-        if feedback not in ["like", "dislike"]:
-            return jsonify({"error": "Invalid feedback type"}), 400
-
-        query = Query.query.get_or_404(query_id)
-        query.happy = feedback == "like"
-        # if feedback == "dislike":
-        #     query.answer = message
-        db.session.commit()
-
-        # Return success message in the selected language
-        if language == "fi":
-            message = "Kiitos palautteestasi!"
-        else:
-            message = "Thank you for your feedback!"
-
-        return jsonify({"message": message})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-def regenerate_missing_embeddings():
-    """Regenerate embeddings for records that are missing them."""
-    try:
-        # Check Files
-        files = File.query.filter_by(file_identifier=None).all()
-        for file in files:
-            file_identifier = generate_and_store_embeddings(file.text)
-            if file_identifier:
-                file.file_identifier = file_identifier
-                print(f"Regenerated embedding for file {file.id}")
-
-        # Check FAQs
-        faqs = FAQ.query.filter_by(embedding=None).all()
-        for faq in faqs:
-            combined_text = f"Question: {faq.question}\nAnswer: {faq.answer}"
-            file_identifier = generate_and_store_embeddings(combined_text)
-            if file_identifier:
-                faq.embedding = json.dumps(file_identifier)
-                print(f"Regenerated embedding for FAQ {faq.id}")
-
-        db.session.commit()
-        return True
-    except Exception as e:
-        print(f"Error regenerating embeddings: {e}")
-        db.session.rollback()
-        return False
-
-
-@main.route("/debug/content")
-@login_required
-def debug_content():
-    """Debug route to check content in the database."""
-    try:
-        files = File.query.all()
-        faqs = FAQ.query.all()
-
-        file_info = [
-            {
-                "id": f.id,
-                "filename": f.original_filename,
-                "has_identifier": bool(f.file_identifier),
-                "identifier": f.file_identifier,
-            }
-            for f in files
-        ]
-
-        faq_info = [
-            {
-                "id": f.id,
-                "question": (
-                    f.question[:50] + "..." if len(f.question) > 50 else f.question
-                ),
-                "has_embedding": bool(f.embedding),
-                "embedding": f.embedding,
-            }
-            for f in faqs
-        ]
-
-        return jsonify(
-            {
-                "files": file_info,
-                "faqs": faq_info,
-                "file_count": len(files),
-                "faq_count": len(faqs),
-            }
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@main.route("/api/query/<int:id>", methods=["GET"])
-@login_required
-def api_get_query(id):
-    try:
-        query = Query.query.get_or_404(id)
-        
-        return jsonify({
-            "type": "success",
-            "query": {
-                "id": query.id,
-                "question": query.question,
-                "answer": query.answer or "",  # Use stored answer
-                "answer_found": query.answer_found,
-                "happy": query.happy,
-                "created_at": query.created_at.strftime('%Y-%m-%d %H:%M')
-            }
-        })
-    except Exception as e:
-        return jsonify({"type": "error", "message": str(e)}), 500

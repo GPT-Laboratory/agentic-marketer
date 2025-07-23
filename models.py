@@ -15,7 +15,7 @@ class User(UserMixin, db.Model):
     phone = db.Column(db.String(20))
     role_id = db.Column(db.Integer, db.ForeignKey('role.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    files = db.relationship('File', backref='user', lazy=True)
+    
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -37,36 +37,68 @@ class FAQ(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     embedding = db.Column(db.Text,nullable=True)  # Store JSON-encoded embedding string
 
-# Uploaded file details
-class File(db.Model):
+class Blog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    text = db.Column(db.Text, nullable=False)
-    summary = db.Column(db.Text)
+    title = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    embedding = db.Column(db.Text)  # Store the embedding for semantic search
-    file_identifier = db.Column(db.String(100))  # ID used to locate embedding files
-    original_filename = db.Column(db.String(255))  # Store the uploaded or derived name
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(50), default='draft')  # draft, scheduled, published
+    image_path = db.Column(db.String(255), nullable=True)
 
-# Chat query tracking
-class Query(db.Model):
+    # Platform flags
+    post_to_wordpress = db.Column(db.Boolean, default=False)
+    post_to_linkedin = db.Column(db.Boolean, default=False)
+    post_to_x = db.Column(db.Boolean, default=False)
+
+    # Posting status
+    posted_to_wordpress = db.Column(db.Boolean, default=False)
+    posted_to_linkedin = db.Column(db.Boolean, default=False)
+    posted_to_x = db.Column(db.Boolean, default=False)
+
+    # Post IDs (if posted)
+    wordpress_post_id = db.Column(db.String(255), nullable=True)
+    linkedin_post_id = db.Column(db.String(255), nullable=True)
+    x_post_id = db.Column(db.String(255), nullable=True)
+
+    # Errors
+    wp_error = db.Column(db.Text, nullable=True)
+    linkedin_error = db.Column(db.Text, nullable=True)
+    x_error = db.Column(db.Text, nullable=True)
+
+class LinkedInPost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    question = db.Column(db.Text, nullable=False)
-    answer = db.Column(db.Text, nullable=True)  # Store the generated answer
-    answer_found = db.Column(db.Boolean, default=False)
-    happy = db.Column(db.Boolean, default=False)
-    language = db.Column(db.String(2), default='en')  # Store language code (en/fi)
+    blog_id = db.Column(db.Integer, db.ForeignKey('blog.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    posted = db.Column(db.Boolean, default=False)
+    error = db.Column(db.Text, nullable=True)
+    image_path = db.Column(db.String(255), nullable=True)
+    scheduled_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Unanswered visitor questions
-class NewQuestion(db.Model):
+
+
+class TwitterPost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    question = db.Column(db.Text, nullable=False)
+    blog_id = db.Column(db.Integer, db.ForeignKey('blog.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    posted = db.Column(db.Boolean, default=False)
+    error = db.Column(db.Text, nullable=True)
+    image_path = db.Column(db.String(255), nullable=True)
+    scheduled_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    embedding = db.Column(db.Text,nullable=True)  # Store the embedding for semantic search
+
+class NewsletterEmail(db.Model):
+    __tablename__ = 'newsletter_email'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 # Settings model to store site-wide configurable text fields
 class Settings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     key = db.Column(db.String(50), unique=True, nullable=False)
-    value = db.Column(db.Text, nullable=False)
+    value = db.Column(db.Text, nullable=True)

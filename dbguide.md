@@ -59,15 +59,13 @@ python -m flask db upgrade
 1. Create a cleanup script `clean_db.py`:
 ```python
 from app import create_app
-from models import db, FAQ, File, Query, NewQuestion
+from models import db, FAQ
 
 app = create_app()
 
 with app.app_context():
     # Delete all records except users and roles
-    NewQuestion.query.delete()
-    Query.query.delete()
-    File.query.delete()
+    
     FAQ.query.delete()
     db.session.commit()
 ```
