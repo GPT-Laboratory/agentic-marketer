@@ -50,6 +50,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from app import post_to_wordpress, log_error
+from requests.auth import HTTPBasicAuth
 
 
 # Create blueprint
@@ -403,33 +404,151 @@ def delete_newsletter_email(email_id):
     return redirect(url_for("main.admin_newsletter_emails"))
 
 
+@main.route("/fetch-wordpress-posts")
+@login_required
+def fetch_wordpress_posts():
+    """Fetch recent posts from WordPress for newsletter"""
+    try:
+        settings = {s.key: s.value for s in Settings.query.all()}
+        wp_url = settings.get('wp_site_url', '').rstrip('/')
+        wp_user = settings.get('wp_username', '')
+        wp_app_password = settings.get('wp_app_password', '')
+        
+        if not (wp_url and wp_user and wp_app_password):
+            return jsonify({"type": "error", "message": "WordPress credentials not configured"})
+        
+        # Get posts from WordPress REST API
+        api_url = f"{wp_url}/wp-json/wp/v2/posts"
+        params = {
+            'per_page': 10,  # Get last 10 posts
+            'status': 'publish',
+            'orderby': 'date',
+            'order': 'desc'
+        }
+        
+        response = requests.get(
+            api_url,
+            params=params,
+            auth=HTTPBasicAuth(wp_user, wp_app_password),
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            posts = response.json()
+            return jsonify({
+                "type": "success", 
+                "posts": posts,
+                "message": f"Found {len(posts)} WordPress posts"
+            })
+        else:
+            log_error(f"Failed to fetch WordPress posts: {response.status_code} - {response.text}")
+            return jsonify({"type": "error", "message": f"Failed to fetch posts: {response.status_code}"})
+            
+    except Exception as e:
+        log_error(f"Error fetching WordPress posts: {str(e)}")
+        return jsonify({"type": "error", "message": f"Error: {str(e)}"})
+
 @main.route("/send-newsletter")
 def send_newsletter():
-    # Step 1: Get current month's blog posts
-    now = datetime.utcnow()
-    start_date = datetime(now.year, now.month, 1)
-    blogs = Blog.query.filter(
-        Blog.created_at >= start_date, Blog.status == "published"
-    ).all()
+    # Check if we should use WordPress posts or local posts
+    use_wordpress = request.args.get('source', 'local') == 'wordpress'
+    
+    if use_wordpress:
+        # Get WordPress posts
+        try:
+            settings = {s.key: s.value for s in Settings.query.all()}
+            wp_url = settings.get('wp_site_url', '').rstrip('/')
+            wp_user = settings.get('wp_username', '')
+            wp_app_password = settings.get('wp_app_password', '')
+            
+            if not (wp_url and wp_user and wp_app_password):
+                log_error("WordPress credentials not configured for newsletter")
+                return jsonify({"message": "WordPress credentials not configured.", "type": "error"}), 500
+            
+            # Get posts from WordPress REST API
+            api_url = f"{wp_url}/wp-json/wp/v2/posts"
+            now = datetime.utcnow()
+            start_date = datetime(now.year, now.month, 1)
+            
+            params = {
+                'per_page': 20,
+                'status': 'publish',
+                'orderby': 'date',
+                'order': 'desc',
+                'after': start_date.isoformat()
+            }
+            
+            response = requests.get(
+                api_url,
+                params=params,
+                auth=HTTPBasicAuth(wp_user, wp_app_password),
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                log_error(f"Failed to fetch WordPress posts for newsletter: {response.status_code}")
+                return jsonify({"message": "Failed to fetch WordPress posts.", "type": "error"}), 500
+            
+            wp_posts = response.json()
+            
+            if not wp_posts:
+                return jsonify({"message": "No WordPress posts found for this month."}), 404
+            
+            # Build email content from WordPress posts
+            welcome = "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+            post_html = ""
+            
+            for post in wp_posts:
+                title = post.get('title', {}).get('rendered', 'Untitled')
+                content = post.get('excerpt', {}).get('rendered', '')
+                if not content:
+                    # If no excerpt, use first 150 chars of content
+                    content = post.get('content', {}).get('rendered', '')
+                    content = content[:150] + "..." if len(content) > 150 else content
+                
+                # Clean HTML tags from content for email
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(content, 'html.parser')
+                clean_content = soup.get_text()
+                clean_content = clean_content[:150] + "..." if len(clean_content) > 150 else clean_content
+                
+                post_url = post.get('link', '#')
+                post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
+            
+            email_body = welcome + post_html
+            
+        except Exception as e:
+            log_error(f"Error fetching WordPress posts for newsletter: {str(e)}")
+            return jsonify({"message": f"Error fetching WordPress posts: {str(e)}", "type": "error"}), 500
+    
+    else:
+        # Use local blog posts (existing logic)
+        now = datetime.utcnow()
+        start_date = datetime(now.year, now.month, 1)
+        blogs = Blog.query.filter(
+            Blog.created_at >= start_date, Blog.status == "published"
+        ).all()
 
-    if not blogs:
-        return jsonify({"message": "No blog posts found for this month."}), 404
+        if not blogs:
+            return jsonify({"message": "No blog posts found for this month."}), 404
 
-    # Step 2: Build email content
-    welcome = "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
-    post_html = ""
-    for post in blogs:
-        snippet = (
-            post.content[:150] + "..." if len(post.content) > 150 else post.content
-        )
-        url = f"https://yourwebsite.com/blog/{post.id}"  # Adjust this URL to match your route
-        post_html += (
-            f"<p><strong><a href='{url}'>{post.title}</a></strong><br>{snippet}</p><hr>"
-        )
+        # Build email content from local posts
+        welcome = "<h3>🌟 Hello from GPT-Lab!</h3><p>Here are our blog highlights from this month:</p><hr>"
+        post_html = ""
+        for post in blogs:
+            snippet = (
+                post.content[:150] + "..." if len(post.content) > 150 else post.content
+            )
+            url = f"https://yourwebsite.com/blog/{post.id}"  # Adjust this URL to match your route
+            post_html += (
+                f"<p><strong><a href='{url}'>{post.title}</a></strong><br>{snippet}</p><hr>"
+            )
+            
+        
 
-    email_body = welcome + post_html
+        email_body = welcome + post_html
 
-    # Step 3: SMTP settings
+    # SMTP settings
     try:
         smtp_server = Settings.query.filter_by(key="SMTP_SERVER").first().value
         port = int(Settings.query.filter_by(key="SMTP_PORT").first().value)
@@ -446,7 +565,7 @@ def send_newsletter():
 
     subject = f"📬 Monthly Blog Highlights - {now.strftime('%B %Y')}"
 
-    # Step 4: Send email to each active subscriber
+    # Send email to each active subscriber
     active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
     success, failed = 0, 0
 
@@ -467,9 +586,10 @@ def send_newsletter():
             log_error(f"❌ Error sending to {receiver_email}: {e}")
             failed += 1
 
+    source_text = "WordPress" if use_wordpress else "local"
     return jsonify(
         {
-            "message": f"✅ Newsletter sent to {success} users, failed for {failed}.",
+            "message": f"✅ Newsletter sent to {success} users, failed for {failed}. Source: {source_text}",
             "month": now.strftime("%B %Y"),
         }
     )
