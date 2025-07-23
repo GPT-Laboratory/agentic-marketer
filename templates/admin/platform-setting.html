@@ -3,7 +3,7 @@
 {% block extra_css %}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
 <style>
-    .required-field::after {
+    .-field::after {
         content: " *";
         color: red;
     }
@@ -35,78 +35,48 @@
                     <h5 class="mb-3">✉️ Email Settings</h5>
 
                     <div class="mb-3">
-                        <label class="form-label">SMTP SERVER <span class="text-danger">*</span></label>
+                        <label class="form-label">SMTP SERVER </label>
                         <input type="text" class="form-control" name="SMTP_SERVER"
-                            value="{{ settings.get('SMTP_SERVER', '') }}" required placeholder="e.g. mail.gpt-lab.eu">
+                            value="{{ settings.get('SMTP_SERVER', '') }}"  placeholder="e.g. mail.gpt-lab.eu">
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">SMTP PORT <span class="text-danger">*</span></label>
+                        <label class="form-label">SMTP PORT </label>
                         <input type="number" class="form-control" name="SMTP_PORT"
-                            value="{{ settings.get('SMTP_PORT', '') }}" required placeholder="e.g. 465">
+                            value="{{ settings.get('SMTP_PORT', '') }}"  placeholder="e.g. 465">
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">SMTP Username <span class="text-danger">*</span></label>
+                        <label class="form-label">SMTP Username </label>
                         <input type="email" class="form-control" name="SMTP_USERNAME"
-                            value="{{ settings.get('SMTP_USERNAME', '') }}" required
+                            value="{{ settings.get('SMTP_USERNAME', '') }}" 
                             placeholder="e.g. newsle2tter@gpt-lab.eu">
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">SMTP Password <span class="text-danger">*</span></label>
+                        <label class="form-label">SMTP Password </label>
                         <input type="password" class="form-control" name="SMTP_PASSWORD"
-                            value="{{ settings.get('SMTP_PASSWORD', '') }}" required placeholder="••••••••••••">
+                            value="{{ settings.get('SMTP_PASSWORD', '') }}"  placeholder="••••••••••••">
                     </div>
                 </div>
 
                 <!-- WordPress Section -->
                 <div class="border rounded p-3 mb-4 bg-light">
                     <h5 class="mb-3">📝 WordPress Settings</h5>
-                    <!-- <div class="mb-3">
-                        <label class="form-label">User ID <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="wp_client_id"
-                            value="{{ settings.get('wp_client_id', '') }}" required>
-                    </div>
                     <div class="mb-3">
-                        <label class="form-label">User Password <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="wp_client_id"
-                            value="{{ settings.get('wp_client_id', '') }}" required>
-                    </div> -->
-                    <div class="mb-3">
-                        <label class="form-label">Client ID <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="wp_client_id"
-                            value="{{ settings.get('wp_client_id', '') }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Client Secret <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="wp_client_secret"
-                            value="{{ settings.get('wp_client_secret', '') }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Redirect URI <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="wp_redirect_uri"
-                            value="{{ settings.get('wp_redirect_uri', 'https://localhost') }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Site URL <span class="text-danger">*</span></label>
+                        <label class="form-label">Site URL </label>
                         <input type="text" class="form-control" name="wp_site_url" placeholder="yourblog.wordpress.com"
-                            value="{{ settings.get('wp_site_url', '') }}" required>
+                            value="{{ settings.get('wp_site_url', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Auth Code (Manual One-Time)</label>
-                        <input type="text" class="form-control" name="wp_auth_code"
-                            value="{{ settings.get('wp_auth_code', '') }}">
+                        <label class="form-label">Username </label>
+                        <input type="text" class="form-control" name="wp_username"
+                            value="{{ settings.get('wp_username', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Access Token</label>
-                        <input type="text" class="form-control" name="wp_access_token"
-                            value="{{ settings.get('wp_access_token', '') }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Refresh Token</label>
-                        <input type="text" class="form-control" name="wp_refresh_token"
-                            value="{{ settings.get('wp_refresh_token', '') }}">
+                        <label class="form-label">Application Password </label>
+                        <input type="password" class="form-control" name="wp_app_password"
+                            value="{{ settings.get('wp_app_password', '') }}" >
                     </div>
                 </div>
 
@@ -114,25 +84,25 @@
                 <div class="border rounded p-3 mb-4 bg-light">
                     <h5 class="mb-3">💼 LinkedIn Settings</h5>
                     <div class="mb-3">
-                        <label class="form-label">Client ID <span class="text-danger">*</span></label>
+                        <label class="form-label">Client ID </label>
                         <input type="text" class="form-control" name="linkedin_client_id"
-                            value="{{ settings.get('linkedin_client_id', '') }}" required>
+                            value="{{ settings.get('linkedin_client_id', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Client Secret <span class="text-danger">*</span></label>
+                        <label class="form-label">Client Secret </label>
                         <input type="text" class="form-control" name="linkedin_client_secret"
-                            value="{{ settings.get('linkedin_client_secret', '') }}" required>
+                            value="{{ settings.get('linkedin_client_secret', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Redirect URI <span class="text-danger">*</span></label>
+                        <label class="form-label">Redirect URI </label>
                         <input type="text" class="form-control" name="linkedin_redirect_uri"
-                            value="{{ settings.get('linkedin_redirect_uri', 'https://localhost') }}" required>
+                            value="{{ settings.get('linkedin_redirect_uri', 'https://localhost') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Organization URN <span class="text-danger">*</span></label>
+                        <label class="form-label">Organization URN </label>
                         <input type="text" class="form-control" name="linkedin_org_id"
                             value="{{ settings.get('linkedin_org_id', '') }}" placeholder="urn:li:organization:123456"
-                            required>
+                            >
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Auth Code (Manual One-Time)</label>
@@ -155,24 +125,24 @@
                 <div class="border rounded p-3 mb-4 bg-light">
                     <h5 class="mb-3">🐦 X (Twitter) Settings</h5>
                     <div class="mb-3">
-                        <label class="form-label">API Key <span class="text-danger">*</span></label>
+                        <label class="form-label">API Key </label>
                         <input type="text" class="form-control" name="x_api_key"
-                            value="{{ settings.get('x_api_key', '') }}" required>
+                            value="{{ settings.get('x_api_key', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">API Secret <span class="text-danger">*</span></label>
+                        <label class="form-label">API Secret </label>
                         <input type="text" class="form-control" name="x_api_secret"
-                            value="{{ settings.get('x_api_secret', '') }}" required>
+                            value="{{ settings.get('x_api_secret', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Access Token <span class="text-danger">*</span></label>
+                        <label class="form-label">Access Token </label>
                         <input type="text" class="form-control" name="x_access_token"
-                            value="{{ settings.get('x_access_token', '') }}" required>
+                            value="{{ settings.get('x_access_token', '') }}" >
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Access Token Secret <span class="text-danger">*</span></label>
+                        <label class="form-label">Access Token Secret </label>
                         <input type="text" class="form-control" name="x_access_token_secret"
-                            value="{{ settings.get('x_access_token_secret', '') }}" required>
+                            value="{{ settings.get('x_access_token_secret', '') }}" >
                     </div>
                 </div>
 

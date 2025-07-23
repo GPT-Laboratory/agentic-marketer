@@ -56,6 +56,11 @@
                     <label for="logo" class="form-label required-field">Application Name</label>
                     <input type="text" class="form-control" id="logo" name="logo" value="{{ settings.get('logo', '') }}" required>
                 </div>
+                <div class="mb-3">
+                    <!-- log sending email -->
+                     <label for="log_sending_email" class="form-label required-field">Log Sending Email</label>
+                     <input type="email" class="form-control" id="log_sending_email" name="log_sending_email" value="{{ settings.get('log_sending_email', '') }}" required>
+                </div>
                 
                 <div class="mb-3">
                     <label for="logo_file" class="form-label">Logo Image</label>
@@ -99,6 +104,7 @@
                     <label for="contact" class="form-label">Contact Page Content</label>
                     <textarea class="form-control" id="contact" name="contact">{{ settings.get('contact', '') }}</textarea>
                 </div>
+               
                 <button type="submit" class="btn btn-primary">Save Settings</button>
             </form>
         </div>

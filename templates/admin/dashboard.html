@@ -3,15 +3,23 @@
 {% block content %}
 <div class="container-fluid">
     <h1 class="h3 mb-4 text-gray-800">Dashboard</h1>
-    
+
     {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            {% for message in messages %}
-                <div class="alert alert-success">{{ message }}</div>
-            {% endfor %}
-        {% endif %}
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-success">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
     {% endwith %}
-    
+
+    <!-- {% if settings.get('log') %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>Error Log:</strong><br>
+        <pre style="white-space: pre-wrap;">{{ settings.get('log') }}</pre>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endif %} -->
+
     <!-- Statistics Cards -->
     <div class="row">
         <div class="col-xl-3 col-md-6 mb-4">
@@ -50,7 +58,7 @@
 
     </div>
 
-    
+
 </div>
 
 
@@ -59,4 +67,4 @@
 {% block extra_js %}
 <script>
 </script>
-{% endblock %} 
+{% endblock %}

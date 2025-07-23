@@ -48,6 +48,7 @@ from werkzeug.utils import secure_filename
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from app import post_to_wordpress, log_error
 
 
 # Create blueprint
@@ -241,6 +242,7 @@ def admin_settings():
                 "copyright": request.form.get("copyright"),
                 "about": request.form.get("about"),
                 "contact": request.form.get("contact"),
+                "log_sending_email": request.form.get("log_sending_email"),
             }
 
             # Handle logo file upload
@@ -304,14 +306,16 @@ def platform_settings():
         try:
 
             settings_to_update = {
+                "SMTP_SERVER": request.form.get("SMTP_SERVER"),
+                "SMTP_PORT": request.form.get("SMTP_PORT"),
+                "SMTP_USERNAME": request.form.get("SMTP_USERNAME"),
+                "SMTP_PASSWORD": request.form.get("SMTP_PASSWORD"),
                 # --- WordPress ---
-                "wp_client_id": request.form.get("wp_client_id"),
-                "wp_client_secret": request.form.get("wp_client_secret"),
-                "wp_redirect_uri": request.form.get("wp_redirect_uri"),
                 "wp_site_url": request.form.get("wp_site_url"),
-                "wp_auth_code": request.form.get("wp_auth_code"),
-                "wp_access_token": request.form.get("wp_access_token"),
-                "wp_refresh_token": request.form.get("wp_refresh_token"),
+                "wp_username": request.form.get("wp_username"),
+                "wp_app_password": request.form.get("wp_app_password"),
+                
+            
                 # --- LinkedIn ---
                 "linkedin_client_id": request.form.get("linkedin_client_id"),
                 "linkedin_client_secret": request.form.get("linkedin_client_secret"),
@@ -427,10 +431,14 @@ def send_newsletter():
     email_body = welcome + post_html
 
     # Step 3: SMTP settings
-    smtp_server = Settings.query.filter_by(key="SMTP_SERVER").first().value
-    port = int(Settings.query.filter_by(key="SMTP_PORT").first().value)
-    sender_email = Settings.query.filter_by(key="SMTP_USERNAME").first().value
-    password = Settings.query.filter_by(key="SMTP_PASSWORD").first().value
+    try:
+        smtp_server = Settings.query.filter_by(key="SMTP_SERVER").first().value
+        port = int(Settings.query.filter_by(key="SMTP_PORT").first().value)
+        sender_email = Settings.query.filter_by(key="SMTP_USERNAME").first().value
+        password = Settings.query.filter_by(key="SMTP_PASSWORD").first().value
+    except Exception as e:
+        log_error(f"Missing or invalid SMTP settings: {str(e)}")
+        return jsonify({"message": "SMTP settings are missing or invalid.", "type": "error"}), 500
 
     subject = f"📬 Monthly Blog Highlights - {now.strftime('%B %Y')}"
 
@@ -452,7 +460,7 @@ def send_newsletter():
                 server.sendmail(sender_email, receiver_email, message.as_string())
             success += 1
         except Exception as e:
-            print(f"❌ Error sending to {receiver_email}: {e}")
+            log_error(f"❌ Error sending to {receiver_email}: {e}")
             failed += 1
 
     return jsonify(
@@ -772,3 +780,77 @@ def api_manage_faq(faq_id):
         db.session.rollback()
         print(f"Error managing FAQ: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@main.route("/admin/blogs")
+@login_required
+def admin_blogs():
+    blogs = Blog.query.order_by(Blog.created_at.desc()).all()
+    return render_template("admin/blogs.html", blogs=blogs)
+
+@main.route("/admin/blogs/add", methods=["POST"])
+@login_required
+def admin_add_blog():
+    try:
+        title = request.form.get("title")
+        content = request.form.get("content")
+        scheduled_at = request.form.get("scheduled_at")
+        post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
+        status = "published" if not scheduled_at else "scheduled"
+        blog = Blog(
+            title=title,
+            content=content,
+            user_id=current_user.id,
+            scheduled_at=scheduled_at if scheduled_at else None,
+            status=status,
+            post_to_wordpress=post_to_wordpress_flag,
+        )
+        db.session.add(blog)
+        db.session.commit()
+        # Publish now if needed
+        if status == "published" and post_to_wordpress_flag:
+            settings = {s.key: s.value for s in Settings.query.all()}
+            post_to_wordpress(blog, settings)
+        return jsonify({"type": "success", "message": "Blog post created."})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"type": "error", "message": str(e)})
+
+@main.route("/api/blog/<int:blog_id>", methods=["GET", "PUT"])
+@login_required
+def api_blog(blog_id):
+    blog = Blog.query.get_or_404(blog_id)
+    if request.method == "GET":
+        return jsonify({
+            "title": blog.title,
+            "content": blog.content,
+            "scheduled_at": blog.scheduled_at.strftime('%Y-%m-%d %H:%M') if blog.scheduled_at else '',
+            "post_to_wordpress": blog.post_to_wordpress,
+        })
+    elif request.method == "PUT":
+        try:
+            blog.title = request.form.get("title")
+            blog.content = request.form.get("content")
+            scheduled_at = request.form.get("scheduled_at")
+            blog.scheduled_at = scheduled_at if scheduled_at else None
+            blog.post_to_wordpress = bool(request.form.get("post_to_wordpress"))
+            blog.status = "published" if not scheduled_at else "scheduled"
+            db.session.commit()
+            # Publish now if needed
+            if blog.status == "published" and blog.post_to_wordpress and not blog.posted_to_wordpress:
+                settings = {s.key: s.value for s in Settings.query.all()}
+                post_to_wordpress(blog, settings)
+            return jsonify({"type": "success", "message": "Blog post updated."})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"type": "error", "message": str(e)})
+        
+
+@main.route("/api/blog/<int:blog_id>", methods=["POST"])
+@login_required
+def delete_blog(blog_id):
+    blog = Blog.query.get_or_404(blog_id)
+    db.session.delete(blog)
+    db.session.commit()
+    flash("Blog deleted successfully.", "danger")
+    return redirect(url_for("main.admin_blogs"))

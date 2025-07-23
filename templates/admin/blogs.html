@@ -1,0 +1,196 @@
+{% extends "admin/base.html" %}
+
+{% block extra_css %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="h3 mb-4 text-gray-800">Blog Posts</h1>
+    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#blogModal" onclick="openBlogModal()">
+        <i class="fas fa-plus"></i> New Blog Post
+    </button>
+    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal" onclick="openAIBlogModal()">
+        <i class="fas fa-plus"></i> New AI Blog Post
+    </button>
+    <div class="card shadow mb-4">
+        <div class="card-body">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Scheduled At</th>
+                        <th>WordPress</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for blog in blogs %}
+                    <tr>
+                        <td>{{ blog.title }}</td>
+                        <td>{{ blog.status }}</td>
+                        <td>{{ blog.scheduled_at or '' }}</td>
+                        <td>{% if blog.posted_to_wordpress %}<span class="badge bg-success">Published</span>{% elif
+                            blog.post_to_wordpress %}<span class="badge bg-warning">Pending</span>{% else %}-{% endif %}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-info" onclick="editBlog({{ blog.id }})"><i
+                                    class="fas fa-pencil-alt"></i></button>
+                            <form action="{{ url_for('main.delete_blog', blog_id=blog.id) }}" method="POST"
+                                class="d-inline" onsubmit="return confirm('Delete this blog?');"><button type="submit"
+                                    class="btn btn-danger btn-sm">
+                                    <i class="fas fa-trash"></i>
+                                </button></form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Blog Modal -->
+<div class="modal fade" id="blogModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="blogModalLabel">New Blog Post</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="blogForm" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-control" id="blogTitle" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Content</label>
+                        <textarea class="form-control" id="blogContent" name="content" rows="8"></textarea>
+                    </div>
+                    <!-- <div class="mb-3">
+                        <label class="form-label">Schedule (optional)</label>
+                        <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
+                            placeholder="YYYY-MM-DD HH:mm">
+                    </div> -->
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="postToWordpress" name="post_to_wordpress">
+                        <label class="form-check-label" for="postToWordpress">Publish to WordPress</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<!-- AI Blog Modal -->
+<div class="modal fade" id="aiblogModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="blogModalLabel">New Blog Post</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="aiblogForm" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-control" id="blogTitle" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Content</label>
+                        <textarea class="form-control" id="blogContent" name="content" rows="8"></textarea>
+                    </div>
+                    <!-- <div class="mb-3">
+                        <label class="form-label">Schedule (optional)</label>
+                        <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
+                            placeholder="YYYY-MM-DD HH:mm">
+                    </div> -->
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="postToWordpress" name="post_to_wordpress">
+                        <label class="form-check-label" for="postToWordpress">Publish to WordPress</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+<script src="https://cdn.ckeditor.com/ckeditor5/40.1.0/classic/ckeditor.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script>
+    let editor;
+    function openBlogModal() {
+        document.getElementById('blogForm').reset();
+        document.getElementById('blogModalLabel').innerText = 'New Blog Post';
+        if (editor) editor.setData('');
+        // document.getElementById('scheduledAt').value = '';
+        document.getElementById('postToWordpress').checked = false;
+        document.getElementById('blogForm').action = '/admin/blogs/add';
+    }
+
+    function editBlog(id) {
+        fetch(`/api/blog/${id}`)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('blogTitle').value = data.title;
+                if (editor) editor.setData(data.content);
+                // document.getElementById('scheduledAt').value = data.scheduled_at || '';
+                document.getElementById('postToWordpress').checked = data.post_to_wordpress;
+                document.getElementById('blogModalLabel').innerText = 'Edit Blog Post';
+                document.getElementById('blogForm').action = `/api/blog/${id}`;
+                new bootstrap.Modal(document.getElementById('blogModal')).show();
+            });
+    }
+
+    ClassicEditor.create(document.querySelector('#blogContent'))
+        .then(newEditor => { editor = newEditor; })
+        .catch(error => { console.error(error); });
+
+    flatpickr('#scheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });
+
+    document.getElementById('blogForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        formData.set('content', editor.getData());
+        const content = editor.getData();
+        if (!content.trim()) {
+            toastr.error('Content is required.');
+            return;
+        }
+        formData.set('content', content);
+        console.log("dddddddd")
+        console.log(this.action)
+        console.log("dddddddd")
+        fetch(this.action, {
+            method: this.action.includes('/add') ? 'POST' : 'PUT',
+
+            body: formData
+        }).then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                // toastr.error('An error occurred while saving the blog post');
+                toastr.error(error.message);
+            });
+    });
+</script>
+{% endblock %}
