@@ -32,6 +32,60 @@
         </div>
     </div>
 
+    <!-- Recurring Newsletter Setup -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Recurring Newsletter Setup</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Recurring Local Newsletter</h6>
+                    <p class="text-muted">Set up automatic newsletter from local posts on the last working day of each month</p>
+                    <button class="btn btn-warning" onclick="setupRecurringNewsletter('local')">
+                        <i class="fas fa-calendar-alt"></i> Setup Recurring Local
+                    </button>
+                </div>
+                <div class="col-md-6">
+                    <h6>Recurring WordPress Newsletter</h6>
+                    <p class="text-muted">Set up automatic newsletter from WordPress posts on the last working day of each month</p>
+                    <button class="btn btn-warning" onclick="setupRecurringNewsletter('wordpress')">
+                        <i class="fas fa-calendar-alt"></i> Setup Recurring WordPress
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Current Recurring Settings Display -->
+            <div class="mt-4" id="currentRecurringSettings">
+                <h6>Current Recurring Settings:</h6>
+                <div id="recurringSettingsContent">
+                    <div class="text-center">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <span class="ms-2">Loading settings...</span>
+                    </div>
+                </div>
+                
+                <!-- Test Buttons -->
+                <div class="mt-3">
+                    <h6>Test Functions:</h6>
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-sm btn-outline-primary" onclick="testRecurringNewsletter('local')">
+                            <i class="fas fa-play"></i> Test Local
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="testRecurringNewsletter('wordpress')">
+                            <i class="fas fa-play"></i> Test WordPress
+                        </button>
+                        <button class="btn btn-sm btn-outline-info" onclick="testLastWorkingDay()">
+                            <i class="fas fa-calendar"></i> Test Date Calc
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Email Management -->
     <div class="card shadow mb-4">
         <div class="card-header py-3 d-flex justify-content-between align-items-center">
@@ -109,6 +163,46 @@
     </div>
 </div>
 
+<!-- Recurring Newsletter Setup Modal -->
+<div class="modal fade" id="recurringModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Setup Recurring Newsletter</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="recurringForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Newsletter Source</label>
+                        <input type="text" class="form-control" id="recurringSource" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Send Time (24-hour format)</label>
+                        <input type="time" class="form-control" id="sendTime" name="send_time" value="09:00" required>
+                        <small class="form-text text-muted">Newsletter will be sent on the last working day of each month at this time</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Status</label>
+                        <select class="form-control" id="recurringStatus" name="status">
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>How it works:</strong> The system will automatically send a newsletter on the last working day of each month (Monday-Friday) at the specified time. If the last day of the month falls on a weekend, it will send on the previous Friday.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <!-- Preview WordPress Posts Modal -->
 <div class="modal fade" id="previewModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -138,6 +232,11 @@
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 <script>
+// Load current recurring settings on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadRecurringSettings();
+});
+
 function sendNewsletter(source) {
     const button = event.target;
     const originalText = button.innerHTML;
@@ -160,6 +259,130 @@ function sendNewsletter(source) {
         .finally(() => {
             button.disabled = false;
             button.innerHTML = originalText;
+        });
+}
+
+function setupRecurringNewsletter(source) {
+    document.getElementById('recurringSource').value = source.charAt(0).toUpperCase() + source.slice(1);
+    
+    // Load existing settings if any
+    fetch(`/api/recurring-newsletter/${source}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.type === 'success' && data.settings) {
+                document.getElementById('sendTime').value = data.settings.send_time || '09:00';
+                document.getElementById('recurringStatus').value = data.settings.status || 'active';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading settings:', error);
+        });
+    
+    const modal = new bootstrap.Modal(document.getElementById('recurringModal'));
+    modal.show();
+}
+
+function loadRecurringSettings() {
+    fetch('/api/recurring-newsletter/settings')
+        .then(response => response.json())
+        .then(data => {
+            const content = document.getElementById('recurringSettingsContent');
+            
+            if (data.type === 'success') {
+                let html = '';
+                if (data.settings.local) {
+                    html += `
+                        <div class="alert alert-info">
+                            <strong>Local Newsletter:</strong> ${data.settings.local.status === 'active' ? 'Active' : 'Inactive'} 
+                            at ${data.settings.local.send_time} on last working day of month
+                        </div>
+                    `;
+                }
+                if (data.settings.wordpress) {
+                    html += `
+                        <div class="alert alert-info">
+                            <strong>WordPress Newsletter:</strong> ${data.settings.wordpress.status === 'active' ? 'Active' : 'Inactive'} 
+                            at ${data.settings.wordpress.send_time} on last working day of month
+                        </div>
+                    `;
+                }
+                if (!data.settings.local && !data.settings.wordpress) {
+                    html = '<div class="alert alert-warning">No recurring newsletters configured</div>';
+                }
+                content.innerHTML = html;
+            } else {
+                content.innerHTML = '<div class="alert alert-danger">Failed to load settings</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('recurringSettingsContent').innerHTML = '<div class="alert alert-danger">Error loading settings</div>';
+        });
+}
+
+// Handle recurring newsletter form submission
+document.getElementById('recurringForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const source = document.getElementById('recurringSource').value.toLowerCase();
+    const formData = new FormData(this);
+    
+    fetch(`/api/recurring-newsletter/${source}`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.type === 'success') {
+            toastr.success(data.message);
+            bootstrap.Modal.getInstance(document.getElementById('recurringModal')).hide();
+            loadRecurringSettings(); // Refresh the settings display
+        } else {
+            toastr.error(data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        toastr.error('An error occurred while saving settings');
+    });
+});
+
+// Test functions
+function testRecurringNewsletter(source) {
+    if (confirm(`Are you sure you want to test the recurring newsletter for ${source}? This will send actual emails to subscribers.`)) {
+        fetch(`/test-recurring-newsletter/${source}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                toastr.error('An error occurred while testing');
+            });
+    }
+}
+
+function testLastWorkingDay() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1; // JavaScript months are 0-indexed
+    
+    fetch(`/get-last-working-day/${year}/${month}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.type === 'success') {
+                toastr.info(`Last working day of ${data.month}/${data.year}: ${data.last_working_day} (${data.day_of_week})`);
+            } else {
+                toastr.error(data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            toastr.error('An error occurred while testing date calculation');
         });
 }
 

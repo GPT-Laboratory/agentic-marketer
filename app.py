@@ -32,7 +32,7 @@ def post_to_wordpress(blog, settings):
     data = {
         "title": blog.title,
         "content": blog.content,
-        "status": "publish" if blog.status == "published" else "future",
+        "status": "draft" if blog.status == "draft" else "publish",
     }
     if blog.scheduled_at:
         data["date"] = blog.scheduled_at.isoformat()
@@ -261,18 +261,58 @@ def create_app(config_name='default'):
             openai.api_key = db.session.query(Settings).filter_by(key='openai_key').first().value
     
     # Initialize and start the scheduler
+    init_scheduler()
+    
+    # Import and register blueprints
+    from routes import main as main_blueprint
+    app.register_blueprint(main_blueprint)
+    
+    # Initialize recurring newsletter jobs after app is created
+    # with app.app_context():
+    #     init_recurring_newsletter_jobs()
+    
+    return app
+
+def init_scheduler():
+    """Initialize the background scheduler"""
+    global scheduler
     if scheduler is None:
         scheduler = BackgroundScheduler()
         scheduler.add_job(publish_scheduled_blogs, 'interval', minutes=1, id='publish_scheduled_blogs')
         scheduler.start()
         # print("Background scheduler started successfully")
         # log_error("Background scheduler started successfully")
-    
-    # Import and register blueprints
-    from routes import main as main_blueprint
-    app.register_blueprint(main_blueprint)
-    
-    return app
+
+def init_recurring_newsletter_jobs():
+    """Initialize recurring newsletter jobs from settings"""
+    try:
+        from models import Settings
+        from routes import update_recurring_newsletter_job
+        
+        # Check for local newsletter settings
+        local_setting = Settings.query.filter_by(key="recurring_newsletter_local").first()
+        if local_setting:
+            try:
+                import json
+                settings_data = json.loads(local_setting.value)
+                if settings_data.get('status') == 'active':
+                    update_recurring_newsletter_job('local', settings_data.get('send_time', '09:00'))
+            except Exception as e:
+                log_error(f"Error initializing local recurring newsletter job: {str(e)}")
+        
+        # Check for WordPress newsletter settings
+        wordpress_setting = Settings.query.filter_by(key="recurring_newsletter_wordpress").first()
+        if wordpress_setting:
+            try:
+                import json
+                settings_data = json.loads(wordpress_setting.value)
+                if settings_data.get('status') == 'active':
+                    update_recurring_newsletter_job('wordpress', settings_data.get('send_time', '09:00'))
+            except Exception as e:
+                log_error(f"Error initializing WordPress recurring newsletter job: {str(e)}")
+                
+    except Exception as e:
+        log_error(f"Error initializing recurring newsletter jobs: {str(e)}")
 
 if __name__ == '__main__':
     app = create_app('development')
