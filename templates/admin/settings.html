@@ -96,6 +96,17 @@
                     <label for="copyright" class="form-label">Copyright Text</label>
                     <input type="text" class="form-control" id="copyright" name="copyright" value="{{ settings.get('copyright', '') }}">
                 </div>
+                
+                <div class="mb-3">
+                    <label for="email_starting" class="form-label">Newsletter Email Starting</label>
+                    <textarea class="form-control" id="email_starting" name="email_starting">{{ settings.get('email_starting', '') }}</textarea>
+                </div>
+                <!-- newsletter email ending -->
+                <div class="mb-3">
+                    <label for="email_ending" class="form-label">Newsletter Email Ending</label>
+                    <textarea class="form-control" id="email_ending" name="email_ending">{{ settings.get('email_ending', '') }}</textarea>
+                </div>
+                <!-- about page content -->
                 <div class="mb-3">
                     <label for="about" class="form-label">About Page Content</label>
                     <textarea class="form-control" id="about" name="about">{{ settings.get('about', '') }}</textarea>
@@ -130,6 +141,24 @@ ClassicEditor
     .create(document.querySelector('#contact'), {
         toolbar: ['heading', '|', 'bold', 'italic', 'link', 'bulletedList', 'numberedList', '|', 'undo', 'redo'],
         placeholder: 'Enter contact page content here...'
+    })
+    .catch(error => {
+        console.error(error);
+    });
+
+ClassicEditor
+    .create(document.querySelector('#email_starting'), {
+        toolbar: ['heading', '|', 'bold', 'italic', 'link', 'bulletedList', 'numberedList', '|', 'undo', 'redo'],
+        placeholder: 'Enter newsletter email starting here...'
+    })
+    .catch(error => {
+        console.error(error);
+    });
+
+ClassicEditor
+    .create(document.querySelector('#email_ending'), {
+        toolbar: ['heading', '|', 'bold', 'italic', 'link', 'bulletedList', 'numberedList', '|', 'undo', 'redo'],
+        placeholder: 'Enter newsletter email ending here...'
     })
     .catch(error => {
         console.error(error);

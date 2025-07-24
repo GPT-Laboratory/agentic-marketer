@@ -24,7 +24,7 @@
                 <thead>
                     <tr>
                         <th>Title</th>
-                        <!-- <th>Status</th> -->
+                        <th>Status</th>
                         <th>Scheduled At</th>
                         <th>WordPress</th>
                         <th>Actions</th>
@@ -35,7 +35,7 @@
                     <tr>
                         <!-- title max 50 characters  -->
                         <td>{{ blog.title[:50] }}...</td>
-                        <!-- <td>{{ blog.status }}</td> -->
+                        <td>{{ blog.status }}</td>
                         <td>{{ blog.scheduled_at or '' }}</td>
                         <td>{% if blog.posted_to_wordpress %}<span class="badge bg-success">Published</span>{% elif
                             blog.post_to_wordpress %}<span class="badge bg-warning">Pending</span>{% else %}-{% endif %}

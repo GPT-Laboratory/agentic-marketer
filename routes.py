@@ -8,6 +8,7 @@ from flask import (
     flash,
     session,
     current_app,
+    abort,
 )
 import re
 from sqlalchemy import func
@@ -26,7 +27,7 @@ from models import (
 from urllib.parse import urlparse
 
 from werkzeug.security import generate_password_hash
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from embed_and_search import (
     generate_and_store_embeddings,
@@ -96,7 +97,7 @@ def chat():
                 {
                     "answer": faq.answer,
                     "type": "success",
-                    "query_id": query.id,
+                    "query_id": faq.id,
                     "faq_id": faq.id,
                 }
             )
@@ -245,6 +246,8 @@ def admin_settings():
                 "about": request.form.get("about"),
                 "contact": request.form.get("contact"),
                 "log_sending_email": request.form.get("log_sending_email"),
+                "email_starting": request.form.get("email_starting"),
+                "email_ending": request.form.get("email_ending"),
             }
 
             # Handle logo file upload
@@ -384,23 +387,24 @@ def add_newsletter_email():
 @main.route("/admin/newsletter-emails/toggle/<int:email_id>")
 @login_required
 def toggle_newsletter_email(email_id):
-    email_entry = NewsletterEmail.query.get_or_404(email_id)
+    email_entry = db.session.get(NewsletterEmail, email_id)
+    if not email_entry:
+        abort(404)
     email_entry.is_active = not email_entry.is_active
     db.session.commit()
-    flash(
-        f"Email {'activated' if email_entry.is_active else 'deactivated'} successfully.",
-        "info",
-    )
+    flash("Email status updated successfully.", "success")
     return redirect(url_for("main.admin_newsletter_emails"))
 
 
 @main.route("/admin/newsletter-emails/delete/<int:email_id>", methods=["POST"])
 @login_required
 def delete_newsletter_email(email_id):
-    email_entry = NewsletterEmail.query.get_or_404(email_id)
+    email_entry = db.session.get(NewsletterEmail, email_id)
+    if not email_entry:
+        abort(404)
     db.session.delete(email_entry)
     db.session.commit()
-    flash("Email deleted successfully.", "danger")
+    flash("Email deleted successfully.", "success")
     return redirect(url_for("main.admin_newsletter_emails"))
 
 
@@ -410,121 +414,167 @@ def fetch_wordpress_posts():
     """Fetch recent posts from WordPress for newsletter"""
     try:
         settings = {s.key: s.value for s in Settings.query.all()}
-        wp_url = settings.get('wp_site_url', '').rstrip('/')
-        wp_user = settings.get('wp_username', '')
-        wp_app_password = settings.get('wp_app_password', '')
-        
+        wp_url = settings.get("wp_site_url", "").rstrip("/")
+        wp_user = settings.get("wp_username", "")
+        wp_app_password = settings.get("wp_app_password", "")
+
         if not (wp_url and wp_user and wp_app_password):
-            return jsonify({"type": "error", "message": "WordPress credentials not configured"})
-        
+            return jsonify(
+                {"type": "error", "message": "WordPress credentials not configured"}
+            )
+
         # Get posts from WordPress REST API
         api_url = f"{wp_url}/wp-json/wp/v2/posts"
         params = {
-            'per_page': 10,  # Get last 10 posts
-            'status': 'publish',
-            'orderby': 'date',
-            'order': 'desc'
+            "per_page": 10,  # Get last 10 posts
+            "status": "publish",
+            "orderby": "date",
+            "order": "desc",
         }
-        
+
         response = requests.get(
             api_url,
             params=params,
             auth=HTTPBasicAuth(wp_user, wp_app_password),
-            timeout=10
+            timeout=10,
         )
-        
+
         if response.status_code == 200:
             posts = response.json()
-            return jsonify({
-                "type": "success", 
-                "posts": posts,
-                "message": f"Found {len(posts)} WordPress posts"
-            })
+            return jsonify(
+                {
+                    "type": "success",
+                    "posts": posts,
+                    "message": f"Found {len(posts)} WordPress posts",
+                }
+            )
         else:
-            log_error(f"Failed to fetch WordPress posts: {response.status_code} - {response.text}")
-            return jsonify({"type": "error", "message": f"Failed to fetch posts: {response.status_code}"})
-            
+            log_error(
+                f"Failed to fetch WordPress posts: {response.status_code} - {response.text}"
+            )
+            return jsonify(
+                {
+                    "type": "error",
+                    "message": f"Failed to fetch posts: {response.status_code}",
+                }
+            )
+
     except Exception as e:
         log_error(f"Error fetching WordPress posts: {str(e)}")
         return jsonify({"type": "error", "message": f"Error: {str(e)}"})
 
+
 @main.route("/send-newsletter")
 def send_newsletter():
     # Check if we should use WordPress posts or local posts
-    use_wordpress = request.args.get('source', 'local') == 'wordpress'
-    
+    use_wordpress = request.args.get("source", "local") == "wordpress"
+    email_starting = Settings.query.filter_by(key="email_starting").first().value
+    email_ending = Settings.query.filter_by(key="email_ending").first().value
+    welcome = email_starting if email_starting else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+
     if use_wordpress:
         # Get WordPress posts
         try:
             settings = {s.key: s.value for s in Settings.query.all()}
-            wp_url = settings.get('wp_site_url', '').rstrip('/')
-            wp_user = settings.get('wp_username', '')
-            wp_app_password = settings.get('wp_app_password', '')
-            
+            wp_url = settings.get("wp_site_url", "").rstrip("/")
+            wp_user = settings.get("wp_username", "")
+            wp_app_password = settings.get("wp_app_password", "")
+
             if not (wp_url and wp_user and wp_app_password):
                 log_error("WordPress credentials not configured for newsletter")
-                return jsonify({"message": "WordPress credentials not configured.", "type": "error"}), 500
-            
+                return (
+                    jsonify(
+                        {
+                            "message": "WordPress credentials not configured.",
+                            "type": "error",
+                        }
+                    ),
+                    500,
+                )
+
             # Get posts from WordPress REST API
             api_url = f"{wp_url}/wp-json/wp/v2/posts"
-            now = datetime.utcnow()
-            start_date = datetime(now.year, now.month, 1)
-            
+            now = datetime.now(timezone.utc)
+            start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+
             params = {
-                'per_page': 20,
-                'status': 'publish',
-                'orderby': 'date',
-                'order': 'desc',
-                'after': start_date.isoformat()
+                "per_page": 20,
+                "status": "publish",
+                "orderby": "date",
+                "order": "desc",
+                "after": start_date.isoformat(),
             }
-            
+
             response = requests.get(
                 api_url,
                 params=params,
                 auth=HTTPBasicAuth(wp_user, wp_app_password),
-                timeout=10
+                timeout=10,
             )
-            
+
             if response.status_code != 200:
-                log_error(f"Failed to fetch WordPress posts for newsletter: {response.status_code}")
-                return jsonify({"message": "Failed to fetch WordPress posts.", "type": "error"}), 500
-            
+                log_error(
+                    f"Failed to fetch WordPress posts for newsletter: {response.status_code}"
+                )
+                return (
+                    jsonify(
+                        {"message": "Failed to fetch WordPress posts.", "type": "error"}
+                    ),
+                    500,
+                )
+
             wp_posts = response.json()
-            
+
             if not wp_posts:
-                return jsonify({"message": "No WordPress posts found for this month."}), 404
-            
+                return (
+                    jsonify({"message": "No WordPress posts found for this month."}),
+                    404,
+                )
+
             # Build email content from WordPress posts
-            welcome = "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+           
             post_html = ""
-            
+
             for post in wp_posts:
-                title = post.get('title', {}).get('rendered', 'Untitled')
-                content = post.get('excerpt', {}).get('rendered', '')
+                title = post.get("title", {}).get("rendered", "Untitled")
+                content = post.get("excerpt", {}).get("rendered", "")
                 if not content:
                     # If no excerpt, use first 150 chars of content
-                    content = post.get('content', {}).get('rendered', '')
+                    content = post.get("content", {}).get("rendered", "")
                     content = content[:150] + "..." if len(content) > 150 else content
-                
+
                 # Clean HTML tags from content for email
                 from bs4 import BeautifulSoup
-                soup = BeautifulSoup(content, 'html.parser')
+
+                soup = BeautifulSoup(content, "html.parser")
                 clean_content = soup.get_text()
-                clean_content = clean_content[:150] + "..." if len(clean_content) > 150 else clean_content
-                
-                post_url = post.get('link', '#')
+                clean_content = (
+                    clean_content[:150] + "..."
+                    if len(clean_content) > 150
+                    else clean_content
+                )
+
+                post_url = post.get("link", "#")
                 post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
-            
-            email_body = welcome + post_html
-            
+
+            email_body = welcome + post_html + email_ending
+
         except Exception as e:
             log_error(f"Error fetching WordPress posts for newsletter: {str(e)}")
-            return jsonify({"message": f"Error fetching WordPress posts: {str(e)}", "type": "error"}), 500
-    
+            return (
+                jsonify(
+                    {
+                        "message": f"Error fetching WordPress posts: {str(e)}",
+                        "type": "error",
+                    }
+                ),
+                500,
+            )
+
     else:
         # Use local blog posts (existing logic)
-        now = datetime.utcnow()
-        start_date = datetime(now.year, now.month, 1)
+        now = datetime.now(timezone.utc)
+        start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
         blogs = Blog.query.filter(
             Blog.created_at >= start_date, Blog.status == "published"
         ).all()
@@ -533,20 +583,15 @@ def send_newsletter():
             return jsonify({"message": "No blog posts found for this month."}), 404
 
         # Build email content from local posts
-        welcome = "<h3>🌟 Hello from GPT-Lab!</h3><p>Here are our blog highlights from this month:</p><hr>"
         post_html = ""
         for post in blogs:
             snippet = (
                 post.content[:150] + "..." if len(post.content) > 150 else post.content
             )
             url = f"https://yourwebsite.com/blog/{post.id}"  # Adjust this URL to match your route
-            post_html += (
-                f"<p><strong><a href='{url}'>{post.title}</a></strong><br>{snippet}</p><hr>"
-            )
-            
-        
+            post_html += f"<p><strong><a href='{url}'>{post.title}</a></strong><br>{snippet}</p><hr>"
 
-        email_body = welcome + post_html
+        email_body = welcome + post_html + email_ending
 
     # SMTP settings
     try:
@@ -615,23 +660,22 @@ def api_create_role():
 @main.route("/api/role/<int:id>", methods=["PUT", "DELETE"])
 @login_required
 def api_manage_role(id):
-    try:
-        role = Role.query.get_or_404(id)
+    role = db.session.get(Role, id)
+    if not role:
+        return jsonify({"type": "error", "message": "Role not found"}), 404
 
-        if request.method == "DELETE":
-            db.session.delete(role)
-            db.session.commit()
-            return jsonify({"message": "Role deleted successfully", "type": "success"})
-
-        name = request.form.get("name")
-        if not name:
-            return jsonify({"message": "Name is required", "type": "error"}), 400
-
-        role.name = name
+    if request.method == "DELETE":
+        db.session.delete(role)
         db.session.commit()
-        return jsonify({"message": "Role updated successfully", "type": "success"})
-    except Exception as e:
-        return jsonify({"message": str(e), "type": "error"}), 500
+        return jsonify({"message": "Role deleted successfully", "type": "success"})
+
+    name = request.form.get("name")
+    if not name:
+        return jsonify({"message": "Name is required", "type": "error"}), 400
+
+    role.name = name
+    db.session.commit()
+    return jsonify({"message": "Role updated successfully", "type": "success"})
 
 
 @main.route("/api/user", methods=["POST"])
@@ -670,26 +714,25 @@ def api_create_user():
 @main.route("/api/user/<int:id>", methods=["PUT", "DELETE"])
 @login_required
 def api_manage_user(id):
-    try:
-        user = User.query.get_or_404(id)
+    user = db.session.get(User, id)
+    if not user:
+        return jsonify({"type": "error", "message": "User not found"}), 404
 
-        if request.method == "DELETE":
-            db.session.delete(user)
-            db.session.commit()
-            return jsonify({"message": "User deleted successfully", "type": "success"})
-
-        user.name = request.form.get("name")
-        user.email = request.form.get("email")
-        user.phone = request.form.get("phone")
-        user.role_id = request.form.get("role_id")
-
-        if request.form.get("password"):
-            user.set_password(request.form.get("password"))
-
+    if request.method == "DELETE":
+        db.session.delete(user)
         db.session.commit()
-        return jsonify({"message": "User updated successfully", "type": "success"})
-    except Exception as e:
-        return jsonify({"message": str(e), "type": "error"}), 500
+        return jsonify({"message": "User deleted successfully", "type": "success"})
+
+    user.name = request.form.get("name")
+    user.email = request.form.get("email")
+    user.phone = request.form.get("phone")
+    user.role_id = request.form.get("role_id")
+
+    if request.form.get("password"):
+        user.set_password(request.form.get("password"))
+
+    db.session.commit()
+    return jsonify({"message": "User updated successfully", "type": "success"})
 
 
 @main.route("/api/faq", methods=["POST"])
@@ -713,7 +756,7 @@ def api_create_faq():
 
             # If query_id is provided, delete the query
             if "query_id" in data:
-                query = Query.query.get(data["query_id"])
+                query = db.session.get(Query, data["query_id"])
                 if query:
                     db.session.delete(query)
 
@@ -874,36 +917,42 @@ def extract_webpage_text(url):
 @main.route("/api/faq/<int:faq_id>", methods=["PUT", "DELETE"])
 @login_required
 def api_manage_faq(faq_id):
-    try:
-        faq = FAQ.query.get_or_404(faq_id)
+    faq = db.session.get(FAQ, faq_id)
+    if not faq:
+        return jsonify({"type": "error", "message": "FAQ not found"}), 404
 
-        if request.method == "DELETE":
+    if request.method == "DELETE":
+        try:
             db.session.delete(faq)
             db.session.commit()
             return jsonify({"message": "FAQ deleted successfully"})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500
 
-        elif request.method == "PUT":
-            data = request.get_json()
-            if not data or "question" not in data or "answer" not in data:
-                return jsonify({"error": "Question and answer are required"}), 400
+    elif request.method == "PUT":
+        data = request.get_json()
+        if not data or "question" not in data or "answer" not in data:
+            return jsonify({"error": "Question and answer are required"}), 400
 
+        try:
             # Update FAQ content
-
+            faq.question = data["question"]
+            faq.answer = data["answer"]
+            db.session.commit()
+            
+            # Generate embeddings for search
             try:
-                faq.question = data["question"]
-                faq.answer = data["answer"]
-                db.session.commit()
-                return jsonify({"message": "FAQ updated successfully"})
-
+                generate_and_store_embeddings(faq.question, faq.answer, faq.id, "faq")
             except Exception as e:
-                db.session.rollback()
                 print(f"Error generating embeddings: {e}")
-                return jsonify({"error": str(e)}), 500
-
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error managing FAQ: {e}")
-        return jsonify({"error": str(e)}), 500
+                # Don't fail the whole operation if embeddings fail
+                
+            return jsonify({"message": "FAQ updated successfully"})
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error managing FAQ: {e}")
+            return jsonify({"error": str(e)}), 500
 
 
 @main.route("/admin/blogs")
@@ -921,15 +970,23 @@ def admin_add_blog():
         content = request.form.get("content")
         scheduled_at_str = request.form.get("scheduled_at")
         post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
-        
+
         # Parse scheduled_at datetime
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+                scheduled_at = datetime.strptime(
+                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                )
+                # scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%dT%H:%M")
             except ValueError:
-                return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
-        
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                    }
+                )
+
         status = "published" if not scheduled_at else "scheduled"
         blog = Blog(
             title=title,
@@ -954,7 +1011,9 @@ def admin_add_blog():
 @main.route("/api/blog/<int:blog_id>", methods=["GET", "PUT"])
 @login_required
 def api_blog(blog_id):
-    blog = Blog.query.get_or_404(blog_id)
+    blog = db.session.get(Blog, blog_id)
+    if not blog:
+        return jsonify({"type": "error", "message": "Blog not found"}), 404
     if request.method == "GET":
         return jsonify(
             {
@@ -973,15 +1032,22 @@ def api_blog(blog_id):
             blog.title = request.form.get("title")
             blog.content = request.form.get("content")
             scheduled_at_str = request.form.get("scheduled_at")
-            
+
             # Parse scheduled_at datetime
             scheduled_at = None
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+                    scheduled_at = datetime.strptime(
+                        scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                    )
                 except ValueError:
-                    return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
-            
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                        }
+                    )
+
             blog.scheduled_at = scheduled_at
             blog.post_to_wordpress = bool(request.form.get("post_to_wordpress"))
             blog.status = "published" if not scheduled_at else "scheduled"
@@ -1009,45 +1075,64 @@ def admin_add_ai_blog():
         ai_link_topic = request.form.get("ai_link_topic")
         scheduled_at_str = request.form.get("scheduled_at")
         post_to_wordpress_flag = bool(request.form.get("post_to_wordpress"))
-        
+
         # Parse scheduled_at datetime
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%d %H:%M")
+                scheduled_at = datetime.strptime(
+                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                )
             except ValueError:
-                return jsonify({"type": "error", "message": "Invalid date format. Use YYYY-MM-DD HH:MM"})
-        
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                    }
+                )
+
         status = "published" if not scheduled_at else "scheduled"
-        
+
         if selectTextLink == "text":
             if not ai_text_topic or not ai_text_topic.strip():
-                return jsonify({"type": "error", "message": "Please enter a topic for AI generation"})
-            
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Please enter a topic for AI generation",
+                    }
+                )
+
             ai_blog = generate_ai_blog(ai_text_topic)
             title = ai_blog.get("headline", "AI Generated Blog Post")
             content = ai_blog.get("content", ai_text_topic)
         else:
             if not ai_link_topic or not ai_link_topic.strip():
-                return jsonify({"type": "error", "message": "Please enter a valid link"})
-            
+                return jsonify(
+                    {"type": "error", "message": "Please enter a valid link"}
+                )
+
             # check if ai_link_topic is a valid url
             if not is_url(ai_link_topic):
                 return jsonify({"type": "error", "message": "Invalid link format"})
-            
+
             # check if ai_link_topic is youtube link or blog link
             if "youtube.com" in ai_link_topic or "youtu.be" in ai_link_topic:
                 extracted_text = extract_youtube_text(ai_link_topic)
             else:
                 extracted_text = extract_webpage_text(ai_link_topic)
-            
+
             if not extracted_text:
-                return jsonify({"type": "error", "message": "Could not extract content from the provided link"})
-            
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Could not extract content from the provided link",
+                    }
+                )
+
             ai_blog = generate_ai_blog(extracted_text)
             title = ai_blog.get("headline", "AI Generated Blog Post")
             content = ai_blog.get("content", extracted_text)
-        
+
         blog = Blog(
             title=title,
             content=content,
@@ -1058,24 +1143,30 @@ def admin_add_ai_blog():
         )
         db.session.add(blog)
         db.session.commit()
-        
+
         # Publish now if needed
         if status == "published" and post_to_wordpress_flag:
             settings = {s.key: s.value for s in Settings.query.all()}
             post_to_wordpress(blog, settings)
-        
-        return jsonify({"type": "success", "message": "AI blog post created successfully."})
+
+        return jsonify(
+            {"type": "success", "message": "AI blog post created successfully."}
+        )
     except Exception as e:
         db.session.rollback()
         log_error(f"Error creating AI blog post: {str(e)}")
-        return jsonify({"type": "error", "message": f"Error creating blog post: {str(e)}"})
+        return jsonify(
+            {"type": "error", "message": f"Error creating blog post: {str(e)}"}
+        )
 
 
 @main.route("/api/blog/<int:blog_id>", methods=["POST"])
 @login_required
 def delete_blog(blog_id):
     try:
-        blog = Blog.query.get_or_404(blog_id)
+        blog = db.session.get(Blog, blog_id)
+        if not blog:
+            return jsonify({"type": "error", "message": "Blog not found"}), 404
         db.session.delete(blog)
         db.session.commit()
         flash("Blog deleted successfully.", "success")
@@ -1088,20 +1179,40 @@ def delete_blog(blog_id):
 
 
 def generate_ai_blog(content):
-    openai_key = Settings.query.filter_by(key="openai_key").first()
+    openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
     if not openai_key or not openai_key.value:
         raise Exception("OpenAI API key not configured")
-    
+
     client = OpenAI(api_key=openai_key.value)
 
     response = client.chat.completions.create(
         model="gpt-4",
+        # messages=[
+        #     {
+        #         "role": "system",
+        #         "content": "You are a professional blog writer. Generate engaging blog content with a catchy headline and well-structured content.",
+        #     },
+        #     {"role": "user", "content": f"Topic: {content} \n\n Generate a blog post in JSON format with 'headline' and 'content' keys. The content should be in HTML format with proper paragraphs and formatting."},
+        # ],
         messages=[
             {
                 "role": "system",
-                "content": "You are a professional blog writer. Generate engaging blog content with a catchy headline and well-structured content.",
+                "content": (
+                    "You are an expert blog writer. Your job is to generate clear, SEO-friendly blog posts.\n"
+                    "Always return your response as a JSON object with the following structure:\n"
+                    '{ "headline": "...", "content": "..." }\n'
+                    "The 'headline' should be catchy and relevant to the topic.\n"
+                    "The 'content' must be well-structured HTML with proper <p> tags, headers, and formatting. "
+                    "Avoid markdown. Do not wrap the response in code blocks. Do not include explanation or commentary."
+                ),
             },
-            {"role": "user", "content": f"Topic: {content} \n\n Generate a blog post in JSON format with 'headline' and 'content' keys. The content should be in HTML format with proper paragraphs and formatting."},
+            {
+                "role": "user",
+                "content": (
+                    f"Topic: {content}\n\n"
+                    "Please write a full blog article in the format mentioned above. Make sure the output is a valid JSON string."
+                ),
+            },
         ],
         temperature=0.8,
         max_tokens=2000,
@@ -1114,25 +1225,238 @@ def generate_ai_blog(content):
         return parsed
     except json.JSONDecodeError:
         # If JSON parsing fails, try to extract headline and content from the response
-        lines = raw.split('\n')
+        lines = raw.split("\n")
         headline = ""
         content = ""
         in_content = False
-        
+
         for line in lines:
             line = line.strip()
             if line.startswith('"headline"') or line.startswith("'headline'"):
-                headline = line.split(':', 1)[1].strip().strip('",\'')
+                headline = line.split(":", 1)[1].strip().strip("\",'")
             elif line.startswith('"content"') or line.startswith("'content'"):
                 in_content = True
-                content_part = line.split(':', 1)[1].strip().strip('",\'')
+                content_part = line.split(":", 1)[1].strip().strip("\",'")
                 content += content_part
             elif in_content and line:
                 content += line
-        
+
         if not headline or not content:
             # Fallback: use the raw response as content
             headline = "AI Generated Blog Post"
             content = raw
-        
+
         return {"headline": headline, "content": content}
+
+
+@main.route("/test-scheduler")
+@login_required
+def test_scheduler():
+    """Test the scheduler manually"""
+    try:
+        from app import publish_scheduled_blogs
+
+        publish_scheduled_blogs()
+        return jsonify(
+            {
+                "type": "success",
+                "message": "Scheduler test completed. Check logs for details.",
+            }
+        )
+    except Exception as e:
+        return jsonify({"type": "error", "message": f"Scheduler test failed: {str(e)}"})
+
+
+@main.route("/check-scheduled-posts")
+@login_required
+def check_scheduled_posts():
+    """Check what scheduled posts exist"""
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        scheduled_posts = Blog.query.filter(
+            Blog.status == "scheduled", Blog.post_to_wordpress == True
+        ).all()
+        
+        posts_info = []
+        for post in scheduled_posts:
+            posts_info.append(
+                {
+                    "id": post.id,
+                    "title": post.title,
+                    "scheduled_at": (
+                        post.scheduled_at.isoformat() if post.scheduled_at else None
+                    ),
+                    "is_due": (
+                        post.scheduled_at <= now if post.scheduled_at else False
+                    ),  # Compare local time with database time
+                    "posted_to_wordpress": post.posted_to_wordpress,
+                }
+            )
+        
+        return jsonify(
+            {
+                "type": "success",
+                "current_time": now.isoformat(),
+                "scheduled_posts": posts_info,
+                "total_scheduled": len(posts_info),
+            }
+        )
+    except Exception as e:
+        return jsonify(
+            {"type": "error", "message": f"Error checking scheduled posts: {str(e)}"}
+        )
+
+
+@main.route("/trigger-scheduled-post/<int:blog_id>")
+@login_required
+def trigger_scheduled_post(blog_id):
+    """Manually trigger a specific scheduled post"""
+    try:
+        blog = db.session.get(Blog, blog_id)
+        if not blog:
+            return jsonify({"type": "error", "message": "Blog not found"}), 404
+
+        if blog.status != "scheduled":
+            return jsonify(
+                {
+                    "type": "error",
+                    "message": f"Blog ID {blog_id} is not scheduled (status: {blog.status})",
+                }
+            )
+
+        if blog.posted_to_wordpress:
+            return jsonify(
+                {
+                    "type": "error",
+                    "message": f"Blog ID {blog_id} has already been posted to WordPress",
+                }
+            )
+
+        # Update status to published
+        blog.status = "published"
+        db.session.commit()
+
+        # Post to WordPress
+        settings = {s.key: s.value for s in Settings.query.all()}
+        success, error = post_to_wordpress(blog, settings)
+
+        if success:
+            return jsonify(
+                {
+                    "type": "success",
+                    "message": f"Successfully published blog '{blog.title}' to WordPress",
+                    "wordpress_post_id": blog.wordpress_post_id,
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    "type": "error",
+                    "message": f"Failed to publish blog '{blog.title}' to WordPress: {error}",
+                }
+            )
+
+    except Exception as e:
+        return jsonify(
+            {"type": "error", "message": f"Error triggering scheduled post: {str(e)}"}
+        )
+
+
+@main.route("/debug-scheduler")
+@login_required
+def debug_scheduler():
+    """Debug information about the scheduler and scheduled posts"""
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        
+        # Get all scheduled posts
+        all_scheduled = Blog.query.filter(
+            Blog.status == "scheduled", Blog.post_to_wordpress == True
+        ).all()
+        
+        # Get posts that are due
+        due_posts = Blog.query.filter(
+            Blog.status == "scheduled",
+            Blog.scheduled_at != None,
+            Blog.scheduled_at <= now,  # Compare local time with database time
+            Blog.post_to_wordpress == True,
+            Blog.posted_to_wordpress == False,
+        ).all()
+        
+        # Get all blogs for comparison
+        all_blogs = Blog.query.all()
+        
+        debug_info = {
+            "current_time": now.isoformat(),
+            "total_blogs": len(all_blogs),
+            "scheduled_blogs": len(all_scheduled),
+            "due_posts": len(due_posts),
+            "scheduler_status": "running",  # We assume it's running if this route is accessible
+            "scheduled_posts_details": [],
+        }
+        
+        for post in all_scheduled:
+            debug_info["scheduled_posts_details"].append(
+                {
+                    "id": post.id,
+                    "title": post.title,
+                    "scheduled_at": (
+                        post.scheduled_at.isoformat() if post.scheduled_at else None
+                    ),
+                    "is_due": (
+                        post.scheduled_at <= now if post.scheduled_at else False
+                    ),  # Compare local time with database time
+                    "posted_to_wordpress": post.posted_to_wordpress,
+                    "status": post.status,
+                    "post_to_wordpress": post.post_to_wordpress,
+                }
+            )
+        
+        return jsonify({"type": "success", "debug_info": debug_info})
+        
+    except Exception as e:
+        return jsonify(
+            {"type": "error", "message": f"Error getting debug info: {str(e)}"}
+        )
+
+
+@main.route("/test-datetime-comparison")
+@login_required
+def test_datetime_comparison():
+    """Test datetime comparison logic"""
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        
+        # Get all scheduled posts
+        all_scheduled = Blog.query.filter(
+            Blog.status == 'scheduled',
+            Blog.post_to_wordpress == True
+        ).all()
+        
+        comparison_results = []
+        
+        for post in all_scheduled:
+            scheduled_time = post.scheduled_at
+            is_due = scheduled_time <= now if scheduled_time else False
+            
+            comparison_results.append({
+                'id': post.id,
+                'title': post.title,
+                'scheduled_at': scheduled_time.isoformat() if scheduled_time else None,
+                'current_time': now.isoformat(),
+                'scheduled_time_type': str(type(scheduled_time)),
+                'current_time_type': str(type(now)),
+                'is_due': is_due,
+                'posted_to_wordpress': post.posted_to_wordpress,
+                'status': post.status
+            })
+        
+        return jsonify({
+            "type": "success",
+            "current_time": now.isoformat(),
+            "comparison_results": comparison_results,
+            "total_scheduled": len(all_scheduled)
+        })
+        
+    except Exception as e:
+        return jsonify({"type": "error", "message": f"Error testing datetime comparison: {str(e)}"})

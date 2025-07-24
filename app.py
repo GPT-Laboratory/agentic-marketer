@@ -6,7 +6,7 @@ import openai
 from config import config
 from models import db
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 from requests.auth import HTTPBasicAuth
 from models import Blog, Settings, db
@@ -17,6 +17,9 @@ import smtplib
 # Initialize login manager
 login_manager = LoginManager()
 login_manager.login_view = 'admin_login'
+
+# Global scheduler variable
+scheduler = None
 
 def post_to_wordpress(blog, settings):
     wp_url = settings.get('wp_site_url', '').rstrip('/')
@@ -59,67 +62,175 @@ def post_to_wordpress(blog, settings):
         return False, str(e)
 
 def publish_scheduled_blogs():
-    with create_app().app_context():
-        now = datetime.utcnow()
-        settings = {s.key: s.value for s in Settings.query.all()}
-        blogs = Blog.query.filter(
-            Blog.status == 'scheduled',
-            Blog.scheduled_at <= now,
-            Blog.post_to_wordpress == True,
-            Blog.posted_to_wordpress == False
-        ).all()
-        for blog in blogs:
-            blog.status = 'published'
-            db.session.commit()
-            try:
-                post_to_wordpress(blog, settings)
-            except Exception as e:
-                log_error(f'Exception in scheduled WordPress publish for Blog ID {blog.id}: {str(e)}')
+    """Background job to publish scheduled blog posts"""
+    try:
+        with create_app().app_context():
+            now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+            settings = {s.key: s.value for s in Settings.query.all()}
+            
+            # Debug: Log current time
+            # log_error(f'Scheduler running at: {now.isoformat()}')
+            
+            # First, get all scheduled posts for debugging
+            # all_scheduled = Blog.query.filter(
+            #     Blog.status == 'scheduled',
+            #     Blog.post_to_wordpress == True
+            # ).all()
+            
+            # log_error(f'Total scheduled posts found: {len(all_scheduled)}')
+            
+            # # Debug: Log each scheduled post
+            # for post in all_scheduled:
+            #     scheduled_time = post.scheduled_at
+            #     is_due = scheduled_time <= now if scheduled_time else False
+            #     log_error(f'Post ID {post.id}: scheduled_at={scheduled_time.isoformat() if scheduled_time else "None"}, is_due={is_due}, type={type(scheduled_time)}')
+            
+            # Find scheduled blogs that are due
+            blogs = Blog.query.filter(
+                Blog.status == 'scheduled',
+                Blog.scheduled_at != None,
+                Blog.scheduled_at <= now,  # Now comparing local time with database time
+                Blog.post_to_wordpress == True,
+                Blog.posted_to_wordpress == False
+            ).all()
+            
+            # log_error(f'Posts that are due and ready to publish: {len(blogs)}')
+            
+            # if blogs:
+            #     log_error(f'Scheduler found {len(blogs)} scheduled blogs to publish')
+                
+            for blog in blogs:
+                try:
+                    # log_error(f'Publishing scheduled blog ID {blog.id}: {blog.title}')
+                    
+                    
+                    # Post to WordPress
+                    success, error = post_to_wordpress(blog, settings)
+                    if success:
+                        blog.status = 'published'
+                        db.session.commit()
+                        # log_error(f'Successfully published blog ID {blog.id} to WordPress')
+                        # Send success email notification
+                        send_scheduled_post_notification(blog, settings, success=True)
+                    else:
+                        # log_error(f'Failed to publish blog ID {blog.id} to WordPress: {error}')
+                        # Send failure email notification
+                        send_scheduled_post_notification(blog, settings, success=False, error=error)
+                        
+                except Exception as e:
+                    # log_error(f'Exception processing scheduled blog ID {blog.id}: {str(e)}')
+                    # Send error email notification
+                    send_scheduled_post_notification(blog, settings, success=False, error=str(e))
+                    
+    except Exception as e:
+        # Log to console if we can't access the database
+        # print(f"Scheduler error: {str(e)}")
+        log_error(f"Scheduler error: {str(e)}")
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(publish_scheduled_blogs, 'interval', minutes=1)
-scheduler.start()
+def send_scheduled_post_notification(blog, settings, success=True, error=None):
+    """Send email notification about scheduled post status"""
+    try:
+        # Get notification email from settings
+        notification_email = settings.get('log_sending_email')
+        if not notification_email:
+            return  # No email configured for notifications
+        
+        # Get SMTP settings
+        smtp_server = settings.get('SMTP_SERVER')
+        smtp_port = settings.get('SMTP_PORT')
+        sender_email = settings.get('SMTP_USERNAME')
+        password = settings.get('SMTP_PASSWORD')
+        
+        if not all([smtp_server, smtp_port, sender_email, password]):
+            log_error(f'SMTP settings incomplete for scheduled post notification')
+            return
+        
+        # Prepare email content
+        if success:
+            subject = f"✅ Scheduled Post Published: {blog.title}"
+            body = f"""
+            <h3>Scheduled Post Successfully Published</h3>
+            <p><strong>Title:</strong> {blog.title}</p>
+            <p><strong>Blog ID:</strong> {blog.id}</p>
+            <p><strong>Scheduled Time:</strong> {blog.scheduled_at.strftime('%Y-%m-%d %H:%M:%S') if blog.scheduled_at else 'N/A'}</p>
+            <p><strong>Published Time:</strong> {datetime.now().replace(tzinfo=None).isoformat()}</p>
+            <p><strong>WordPress Post ID:</strong> {blog.wordpress_post_id or 'N/A'}</p>
+            <p><strong>Status:</strong> {blog.status}</p>
+            """
+        else:
+            subject = f"❌ Scheduled Post Failed: {blog.title}"
+            body = f"""
+            <h3>Scheduled Post Failed to Publish</h3>
+            <p><strong>Title:</strong> {blog.title}</p>
+            <p><strong>Blog ID:</strong> {blog.id}</p>
+            <p><strong>Scheduled Time:</strong> {blog.scheduled_at.strftime('%Y-%m-%d %H:%M:%S') if blog.scheduled_at else 'N/A'}</p>
+            <p><strong>Error Time:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p><strong>Error:</strong> {error or 'Unknown error'}</p>
+            <p><strong>Status:</strong> {blog.status}</p>
+            """
+        
+        # Send email
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = notification_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        with smtplib.SMTP_SSL(smtp_server, int(smtp_port)) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, notification_email, msg.as_string())
+            
+        # log_error(f'Scheduled post notification email sent to {notification_email}')
+        
+    except Exception as e:
+        log_error(f'Failed to send scheduled post notification email: {str(e)}')
 
 def log_error(message):
-    from flask import current_app
-    with create_app().app_context():
-        # Append to log in Settings
-        log_setting = Settings.query.filter_by(key='log').first()
-        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_entry = f"[{now}] {message}\n"
-        if log_setting:
-            log_setting.value = (log_setting.value or '') + log_entry
-        else:
-            log_setting = Settings(key='log', value=log_entry)
-            db.session.add(log_setting)
-        db.session.commit()
-        # Send email if log_sending_email is set
-        log_email_setting = Settings.query.filter_by(key='log_sending_email').first()
-        if log_email_setting and log_email_setting.value:
-            try:
-                smtp_server = Settings.query.filter_by(key='SMTP_SERVER').first().value
-                port = int(Settings.query.filter_by(key='SMTP_PORT').first().value)
-                sender_email = Settings.query.filter_by(key='SMTP_USERNAME').first().value
-                password = Settings.query.filter_by(key='SMTP_PASSWORD').first().value
-                receiver_email = log_email_setting.value
-                subject = "Agentic Marketer Error Log"
-                body = message
-                msg = MIMEMultipart()
-                msg['From'] = sender_email
-                msg['To'] = receiver_email
-                msg['Subject'] = subject
-                msg.attach(MIMEText(body, 'plain'))
-                with smtplib.SMTP_SSL(smtp_server, port) as server:
-                    server.login(sender_email, password)
-                    server.sendmail(sender_email, receiver_email, msg.as_string())
-            except Exception as e:
-                # If email fails, append to log
-                fail_entry = f"[{now}] Failed to send log email: {str(e)}\n"
-                log_setting.value += fail_entry
-                db.session.commit()
+    try:
+        with create_app().app_context():
+            # Append to log in Settings
+            log_setting = db.session.query(Settings).filter_by(key='log').first()
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            log_entry = f"[{now}] {message}\n"
+            if log_setting:
+                log_setting.value = (log_setting.value or '') + log_entry
+            else:
+                log_setting = Settings(key='log', value=log_entry)
+                db.session.add(log_setting)
+            db.session.commit()
+            # Send email if log_sending_email is set
+            log_email_setting = db.session.query(Settings).filter_by(key='log_sending_email').first()
+            if log_email_setting and log_email_setting.value:
+                try:
+                    smtp_server = db.session.query(Settings).filter_by(key='SMTP_SERVER').first().value
+                    port = int(db.session.query(Settings).filter_by(key='SMTP_PORT').first().value)
+                    sender_email = db.session.query(Settings).filter_by(key='SMTP_USERNAME').first().value
+                    password = db.session.query(Settings).filter_by(key='SMTP_PASSWORD').first().value
+                    receiver_email = log_email_setting.value
+                    subject = "Agentic Marketer Error Log"
+                    body = message
+                    msg = MIMEMultipart()
+                    msg['From'] = sender_email
+                    msg['To'] = receiver_email
+                    msg['Subject'] = subject
+                    msg.attach(MIMEText(body, 'plain'))
+                    with smtplib.SMTP_SSL(smtp_server, port) as server:
+                        server.login(sender_email, password)
+                        server.sendmail(sender_email, receiver_email, msg.as_string())
+                except Exception as e:
+                    # If email fails, append to log
+                    fail_entry = f"[{now}] Failed to send log email: {str(e)}\n"
+                    log_setting.value += fail_entry
+                    db.session.commit()
+    except Exception as e:
+        # Fallback to console logging
+        print(f"Log error failed: {str(e)}")
+        print(f"Original message: {message}")
 
 def create_app(config_name='default'):
     """Create and configure the Flask application."""
+    global scheduler
+    
     app = Flask(__name__)
     
     # Load configuration
@@ -135,7 +246,7 @@ def create_app(config_name='default'):
     
     @login_manager.user_loader
     def load_user(user_id):
-        return User.query.get(int(user_id))
+        return db.session.get(User, int(user_id))
     
     # Context processor for settings
     @app.context_processor
@@ -147,7 +258,15 @@ def create_app(config_name='default'):
     @app.before_request
     def update_openai_key():
         if current_user.is_authenticated:
-            openai.api_key = Settings.query.filter_by(key='openai_key').first().value
+            openai.api_key = db.session.query(Settings).filter_by(key='openai_key').first().value
+    
+    # Initialize and start the scheduler
+    if scheduler is None:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(publish_scheduled_blogs, 'interval', minutes=1, id='publish_scheduled_blogs')
+        scheduler.start()
+        # print("Background scheduler started successfully")
+        # log_error("Background scheduler started successfully")
     
     # Import and register blueprints
     from routes import main as main_blueprint

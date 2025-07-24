@@ -12,13 +12,52 @@
     {% endif %}
     {% endwith %}
 
-    <!-- {% if settings.get('log') %}
+    {% if settings.get('log') %}
     <div class="alert alert-danger alert-dismissible fade show" role="alert">
         <strong>Error Log:</strong><br>
         <pre style="white-space: pre-wrap;">{{ settings.get('log') }}</pre>
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
-    {% endif %} -->
+    {% endif %}
+
+    <!-- Scheduler Testing -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Scheduler Testing</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <button class="btn btn-info" onclick="testScheduler()">
+                        <i class="fas fa-play"></i> Test Scheduler
+                    </button>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-secondary" onclick="checkScheduledPosts()">
+                        <i class="fas fa-list"></i> Check Scheduled Posts
+                    </button>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-primary" onclick="debugScheduler()">
+                        <i class="fas fa-bug"></i> Debug Scheduler
+                    </button>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-success" onclick="testDateTimeComparison()">
+                        <i class="fas fa-clock"></i> Test DateTime
+                    </button>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-3">
+                    <button class="btn btn-warning" onclick="clearLog()">
+                        <i class="fas fa-trash"></i> Clear Log
+                    </button>
+                </div>
+            </div>
+            <div id="schedulerResults" class="mt-3"></div>
+        </div>
+    </div>
 
     <!-- Statistics Cards -->
     <div class="row">
@@ -65,6 +104,245 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 <script>
+function testScheduler() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+    
+    fetch('/test-scheduler')
+        .then(response => response.json())
+        .then(data => {
+            if (data.type === 'success') {
+                toastr.success(data.message);
+                setTimeout(() => window.location.reload(), 2000);
+            } else {
+                toastr.error(data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            toastr.error('An error occurred while testing the scheduler');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalText;
+        });
+}
+
+function checkScheduledPosts() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+    
+    fetch('/check-scheduled-posts')
+        .then(response => response.json())
+        .then(data => {
+            const resultsDiv = document.getElementById('schedulerResults');
+            if (data.type === 'success') {
+                let html = `<div class="alert alert-info">
+                    <strong>Current Time:</strong> ${data.current_time}<br>
+                    <strong>Total Scheduled Posts:</strong> ${data.total_scheduled}
+                </div>`;
+                
+                if (data.scheduled_posts.length > 0) {
+                    html += '<div class="table-responsive"><table class="table table-sm">';
+                    html += '<thead><tr><th>ID</th><th>Title</th><th>Scheduled At</th><th>Is Due</th><th>Posted</th><th>Action</th></tr></thead><tbody>';
+                    
+                    data.scheduled_posts.forEach(post => {
+                        const isDueClass = post.is_due ? 'text-danger' : 'text-success';
+                        const postedClass = post.posted_to_wordpress ? 'text-success' : 'text-warning';
+                        const triggerButton = post.is_due && !post.posted_to_wordpress ? 
+                            `<button class="btn btn-sm btn-success" onclick="triggerPost(${post.id})">Trigger Now</button>` : 
+                            '<span class="text-muted">-</span>';
+                        
+                        html += `<tr>
+                            <td>${post.id}</td>
+                            <td>${post.title}</td>
+                            <td>${post.scheduled_at || 'N/A'}</td>
+                            <td class="${isDueClass}">${post.is_due ? 'Yes' : 'No'}</td>
+                            <td class="${postedClass}">${post.posted_to_wordpress ? 'Yes' : 'No'}</td>
+                            <td>${triggerButton}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                } else {
+                    html += '<div class="alert alert-warning">No scheduled posts found.</div>';
+                }
+                
+                resultsDiv.innerHTML = html;
+            } else {
+                toastr.error(data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            toastr.error('An error occurred while checking scheduled posts');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalText;
+        });
+}
+
+function debugScheduler() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Debugging...';
+    
+    fetch('/debug-scheduler')
+        .then(response => response.json())
+        .then(data => {
+            const resultsDiv = document.getElementById('schedulerResults');
+            if (data.type === 'success') {
+                const info = data.debug_info;
+                let html = `<div class="alert alert-primary">
+                    <h5>🔍 Scheduler Debug Information</h5>
+                    <p><strong>Current Time:</strong> ${info.current_time}</p>
+                    <p><strong>Total Blogs:</strong> ${info.total_blogs}</p>
+                    <p><strong>Scheduled Blogs:</strong> ${info.scheduled_blogs}</p>
+                    <p><strong>Due Posts:</strong> ${info.due_posts}</p>
+                    <p><strong>Scheduler Status:</strong> <span class="badge bg-success">${info.scheduler_status}</span></p>
+                </div>`;
+                
+                if (info.scheduled_posts_details.length > 0) {
+                    html += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+                    html += '<thead class="table-dark"><tr><th>ID</th><th>Title</th><th>Scheduled At</th><th>Is Due</th><th>Posted</th><th>Status</th><th>WP Flag</th></tr></thead><tbody>';
+                    
+                    info.scheduled_posts_details.forEach(post => {
+                        const isDueClass = post.is_due ? 'table-danger' : 'table-success';
+                        const postedClass = post.posted_to_wordpress ? 'text-success' : 'text-warning';
+                        const statusClass = post.status === 'scheduled' ? 'text-primary' : 'text-secondary';
+                        
+                        html += `<tr class="${isDueClass}">
+                            <td>${post.id}</td>
+                            <td>${post.title}</td>
+                            <td>${post.scheduled_at || 'N/A'}</td>
+                            <td>${post.is_due ? '✅ Yes' : '❌ No'}</td>
+                            <td class="${postedClass}">${post.posted_to_wordpress ? '✅ Yes' : '❌ No'}</td>
+                            <td class="${statusClass}">${post.status}</td>
+                            <td>${post.post_to_wordpress ? '✅ Yes' : '❌ No'}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                } else {
+                    html += '<div class="alert alert-warning">No scheduled posts found in debug data.</div>';
+                }
+                
+                resultsDiv.innerHTML = html;
+            } else {
+                toastr.error(data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            toastr.error('An error occurred while debugging the scheduler');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalText;
+        });
+}
+
+function triggerPost(blogId) {
+    if (confirm(`Are you sure you want to trigger blog ID ${blogId} now?`)) {
+        fetch(`/trigger-scheduled-post/${blogId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                    setTimeout(() => checkScheduledPosts(), 1000);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                toastr.error('An error occurred while triggering the post');
+            });
+    }
+}
+
+function clearLog() {
+    if (confirm('Are you sure you want to clear the error log?')) {
+        fetch('/admin/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'log='
+        }).then(() => {
+            toastr.success('Log cleared successfully');
+            setTimeout(() => window.location.reload(), 1000);
+        }).catch(error => {
+            toastr.error('Failed to clear log');
+        });
+    }
+}
+
+function testDateTimeComparison() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+    
+    fetch('/test-datetime-comparison')
+        .then(response => response.json())
+        .then(data => {
+            const resultsDiv = document.getElementById('schedulerResults');
+            if (data.type === 'success') {
+                let html = `<div class="alert alert-success">
+                    <h5>🕐 DateTime Comparison Test Results</h5>
+                    <p><strong>Current Time:</strong> ${data.current_time}</p>
+                    <p><strong>Total Scheduled Posts:</strong> ${data.total_scheduled}</p>
+                </div>`;
+                
+                if (data.comparison_results.length > 0) {
+                    html += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+                    html += '<thead class="table-dark"><tr><th>ID</th><th>Title</th><th>Scheduled At</th><th>Current Time</th><th>Is Due</th><th>Posted</th><th>Status</th></tr></thead><tbody>';
+                    
+                    data.comparison_results.forEach(result => {
+                        const isDueClass = result.is_due ? 'table-danger' : 'table-success';
+                        const postedClass = result.posted_to_wordpress ? 'text-success' : 'text-warning';
+                        
+                        html += `<tr class="${isDueClass}">
+                            <td>${result.id}</td>
+                            <td>${result.title}</td>
+                            <td>${result.scheduled_at || 'N/A'}</td>
+                            <td>${result.current_time}</td>
+                            <td><strong>${result.is_due ? '✅ YES' : '❌ NO'}</strong></td>
+                            <td class="${postedClass}">${result.posted_to_wordpress ? '✅ Yes' : '❌ No'}</td>
+                            <td>${result.status}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                    
+                    // Add summary
+                    const duePosts = data.comparison_results.filter(r => r.is_due && !r.posted_to_wordpress);
+                    html += `<div class="alert alert-info">
+                        <strong>Summary:</strong> ${duePosts.length} posts are due and ready to publish
+                    </div>`;
+                } else {
+                    html += '<div class="alert alert-warning">No scheduled posts found.</div>';
+                }
+                
+                resultsDiv.innerHTML = html;
+            } else {
+                toastr.error(data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            toastr.error('An error occurred while testing datetime comparison');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalText;
+        });
+}
 </script>
 {% endblock %}
