@@ -3,6 +3,7 @@
 {% block extra_css %}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+
 {% endblock %}
 
 {% block content %}
@@ -150,7 +151,7 @@
 
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
-<script src="https://cdn.ckeditor.com/ckeditor5/40.1.0/classic/ckeditor.js"></script>
+
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script>
     document.getElementById("selectTextLink").addEventListener("change", function () {
@@ -166,11 +167,13 @@
             textContainer.classList.add("d-none");
         }
     });
-    let editor;
+    let editor= document.getElementById('blogContent');
     function openBlogModal() {
         document.getElementById('blogForm').reset();
         document.getElementById('blogModalLabel').innerText = 'New Blog Post';
-        if (editor) editor.setData('');
+        if (editor){
+            $('#blogContent').summernote('code', '');
+        }
         // document.getElementById('scheduledAt').value = '';
         document.getElementById('postToWordpress').checked = false;
         document.getElementById('blogForm').action = '/admin/blogs/add';
@@ -188,7 +191,8 @@
             .then(response => response.json())
             .then(data => {
                 document.getElementById('blogTitle').value = data.title;
-                if (editor) editor.setData(data.content);
+                $('#blogContent').summernote('code', data.content);
+                // if (editor) editor.setData(data.content);
                 document.getElementById('scheduledAt').value = data.scheduled_at || '';
                 document.getElementById('postToWordpress').checked = data.post_to_wordpress;
                 document.getElementById('blogModalLabel').innerText = 'Edit Blog Post';
@@ -197,9 +201,27 @@
             });
     }
 
-    ClassicEditor.create(document.querySelector('#blogContent'))
-        .then(newEditor => { editor = newEditor; })
-        .catch(error => { console.error(error); });
+    $('#blogContent').summernote({
+        placeholder: 'Write your blog here...',
+        height: 300,
+        callbacks: {
+            onImageUpload: function (files) {
+                const formData = new FormData();
+                formData.append('file', files[0]);
+
+                fetch('/upload-image', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(res => res.json())
+                    .then(data => {
+                        
+                        $('#blogContent').summernote('insertImage', data.url);
+                    })
+                    .catch(err => console.error('Image upload failed:', err));
+            }
+        }
+    });
 
     // Initialize flatpickr for both scheduling fields
     flatpickr('#scheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });
@@ -208,19 +230,19 @@
     document.getElementById('blogForm').addEventListener('submit', function (e) {
         e.preventDefault();
         const formData = new FormData(this);
-        const content = editor.getData();
+        const content = $('#blogContent').summernote('code');
         if (!content.trim()) {
             toastr.error('Content is required.');
             return;
         }
         formData.set('content', content);
-        
+
         // Add scheduled_at to form data
         const scheduledAt = document.getElementById('scheduledAt').value;
         if (scheduledAt) {
             formData.set('scheduled_at', scheduledAt);
         }
-        
+
         fetch(this.action, {
             method: this.action.includes('/add') ? 'POST' : 'PUT',
             body: formData

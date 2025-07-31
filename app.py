@@ -5,7 +5,6 @@ from flask_migrate import Migrate
 import openai
 from config import config
 from models import db
-from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timezone
 import requests
 from requests.auth import HTTPBasicAuth
@@ -13,13 +12,12 @@ from models import Blog, Settings, db
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import smtplib
+from flask_cors import CORS
 
 # Initialize login manager
 login_manager = LoginManager()
 login_manager.login_view = 'admin_login'
 
-# Global scheduler variable
-scheduler = None
 
 def post_to_wordpress(blog, settings):
     wp_url = settings.get('wp_site_url', '').rstrip('/')
@@ -32,7 +30,7 @@ def post_to_wordpress(blog, settings):
     data = {
         "title": blog.title,
         "content": blog.content,
-        "status": "draft" if blog.status == "draft" else "publish",
+        "status": "publish" if blog.status == "published" else "draft",
     }
     if blog.scheduled_at:
         data["date"] = blog.scheduled_at.isoformat()
@@ -61,71 +59,6 @@ def post_to_wordpress(blog, settings):
         log_error(f'Exception posting to WordPress for Blog ID {blog.id}: {str(e)}')
         return False, str(e)
 
-def publish_scheduled_blogs():
-    """Background job to publish scheduled blog posts"""
-    try:
-        with create_app().app_context():
-            now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
-            settings = {s.key: s.value for s in Settings.query.all()}
-            
-            # Debug: Log current time
-            # log_error(f'Scheduler running at: {now.isoformat()}')
-            
-            # First, get all scheduled posts for debugging
-            # all_scheduled = Blog.query.filter(
-            #     Blog.status == 'scheduled',
-            #     Blog.post_to_wordpress == True
-            # ).all()
-            
-            # log_error(f'Total scheduled posts found: {len(all_scheduled)}')
-            
-            # # Debug: Log each scheduled post
-            # for post in all_scheduled:
-            #     scheduled_time = post.scheduled_at
-            #     is_due = scheduled_time <= now if scheduled_time else False
-            #     log_error(f'Post ID {post.id}: scheduled_at={scheduled_time.isoformat() if scheduled_time else "None"}, is_due={is_due}, type={type(scheduled_time)}')
-            
-            # Find scheduled blogs that are due
-            blogs = Blog.query.filter(
-                Blog.status == 'scheduled',
-                Blog.scheduled_at != None,
-                Blog.scheduled_at <= now,  # Now comparing local time with database time
-                Blog.post_to_wordpress == True,
-                Blog.posted_to_wordpress == False
-            ).all()
-            
-            # log_error(f'Posts that are due and ready to publish: {len(blogs)}')
-            
-            # if blogs:
-            #     log_error(f'Scheduler found {len(blogs)} scheduled blogs to publish')
-                
-            for blog in blogs:
-                try:
-                    # log_error(f'Publishing scheduled blog ID {blog.id}: {blog.title}')
-                    
-                    
-                    # Post to WordPress
-                    success, error = post_to_wordpress(blog, settings)
-                    if success:
-                        blog.status = 'published'
-                        db.session.commit()
-                        # log_error(f'Successfully published blog ID {blog.id} to WordPress')
-                        # Send success email notification
-                        send_scheduled_post_notification(blog, settings, success=True)
-                    else:
-                        # log_error(f'Failed to publish blog ID {blog.id} to WordPress: {error}')
-                        # Send failure email notification
-                        send_scheduled_post_notification(blog, settings, success=False, error=error)
-                        
-                except Exception as e:
-                    # log_error(f'Exception processing scheduled blog ID {blog.id}: {str(e)}')
-                    # Send error email notification
-                    send_scheduled_post_notification(blog, settings, success=False, error=str(e))
-                    
-    except Exception as e:
-        # Log to console if we can't access the database
-        # print(f"Scheduler error: {str(e)}")
-        log_error(f"Scheduler error: {str(e)}")
 
 def send_scheduled_post_notification(blog, settings, success=True, error=None):
     """Send email notification about scheduled post status"""
@@ -259,9 +192,7 @@ def create_app(config_name='default'):
     def update_openai_key():
         if current_user.is_authenticated:
             openai.api_key = db.session.query(Settings).filter_by(key='openai_key').first().value
-    
-    # Initialize and start the scheduler
-    init_scheduler()
+
     
     # Import and register blueprints
     from routes import main as main_blueprint
@@ -273,47 +204,7 @@ def create_app(config_name='default'):
     
     return app
 
-def init_scheduler():
-    """Initialize the background scheduler"""
-    global scheduler
-    if scheduler is None:
-        scheduler = BackgroundScheduler()
-        scheduler.add_job(publish_scheduled_blogs, 'interval', minutes=1, id='publish_scheduled_blogs')
-        scheduler.start()
-        # print("Background scheduler started successfully")
-        # log_error("Background scheduler started successfully")
-
-def init_recurring_newsletter_jobs():
-    """Initialize recurring newsletter jobs from settings"""
-    try:
-        from models import Settings
-        from routes import update_recurring_newsletter_job
-        
-        # Check for local newsletter settings
-        local_setting = Settings.query.filter_by(key="recurring_newsletter_local").first()
-        if local_setting:
-            try:
-                import json
-                settings_data = json.loads(local_setting.value)
-                if settings_data.get('status') == 'active':
-                    update_recurring_newsletter_job('local', settings_data.get('send_time', '09:00'))
-            except Exception as e:
-                log_error(f"Error initializing local recurring newsletter job: {str(e)}")
-        
-        # Check for WordPress newsletter settings
-        wordpress_setting = Settings.query.filter_by(key="recurring_newsletter_wordpress").first()
-        if wordpress_setting:
-            try:
-                import json
-                settings_data = json.loads(wordpress_setting.value)
-                if settings_data.get('status') == 'active':
-                    update_recurring_newsletter_job('wordpress', settings_data.get('send_time', '09:00'))
-            except Exception as e:
-                log_error(f"Error initializing WordPress recurring newsletter job: {str(e)}")
-                
-    except Exception as e:
-        log_error(f"Error initializing recurring newsletter jobs: {str(e)}")
-
 if __name__ == '__main__':
     app = create_app('development')
+    CORS(app)
     app.run(host='0.0.0.0', port=8080) 

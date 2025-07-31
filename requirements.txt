@@ -18,3 +18,4 @@ gunicorn
 flask-migrate
 APScheduler
 python-dateutil
+flask_cors

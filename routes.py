@@ -49,6 +49,7 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 import smtplib
 from email.mime.multipart import MIMEMultipart
+import mimetypes
 from email.mime.text import MIMEText
 from app import post_to_wordpress, log_error
 from requests.auth import HTTPBasicAuth
@@ -472,7 +473,11 @@ def send_newsletter():
     use_wordpress = request.args.get("source", "local") == "wordpress"
     email_starting = Settings.query.filter_by(key="email_starting").first().value
     email_ending = Settings.query.filter_by(key="email_ending").first().value
-    welcome = email_starting if email_starting else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+    welcome = (
+        email_starting
+        if email_starting
+        else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+    )
 
     if use_wordpress:
         # Get WordPress posts
@@ -534,7 +539,7 @@ def send_newsletter():
                 )
 
             # Build email content from WordPress posts
-           
+
             post_html = ""
 
             for post in wp_posts:
@@ -942,14 +947,14 @@ def api_manage_faq(faq_id):
             faq.question = data["question"]
             faq.answer = data["answer"]
             db.session.commit()
-            
+
             # Generate embeddings for search
             try:
                 generate_and_store_embeddings(faq.question, faq.answer, faq.id, "faq")
             except Exception as e:
                 print(f"Error generating embeddings: {e}")
                 # Don't fail the whole operation if embeddings fail
-                
+
             return jsonify({"message": "FAQ updated successfully"})
         except Exception as e:
             db.session.rollback()
@@ -1278,7 +1283,7 @@ def check_scheduled_posts():
         scheduled_posts = Blog.query.filter(
             Blog.status == "scheduled", Blog.post_to_wordpress == True
         ).all()
-        
+
         posts_info = []
         for post in scheduled_posts:
             posts_info.append(
@@ -1294,7 +1299,7 @@ def check_scheduled_posts():
                     "posted_to_wordpress": post.posted_to_wordpress,
                 }
             )
-        
+
         return jsonify(
             {
                 "type": "success",
@@ -1370,12 +1375,12 @@ def debug_scheduler():
     """Debug information about the scheduler and scheduled posts"""
     try:
         now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
-        
+
         # Get all scheduled posts
         all_scheduled = Blog.query.filter(
             Blog.status == "scheduled", Blog.post_to_wordpress == True
         ).all()
-        
+
         # Get posts that are due
         due_posts = Blog.query.filter(
             Blog.status == "scheduled",
@@ -1384,10 +1389,10 @@ def debug_scheduler():
             Blog.post_to_wordpress == True,
             Blog.posted_to_wordpress == False,
         ).all()
-        
+
         # Get all blogs for comparison
         all_blogs = Blog.query.all()
-        
+
         debug_info = {
             "current_time": now.isoformat(),
             "total_blogs": len(all_blogs),
@@ -1396,7 +1401,7 @@ def debug_scheduler():
             "scheduler_status": "running",  # We assume it's running if this route is accessible
             "scheduled_posts_details": [],
         }
-        
+
         for post in all_scheduled:
             debug_info["scheduled_posts_details"].append(
                 {
@@ -1413,9 +1418,9 @@ def debug_scheduler():
                     "post_to_wordpress": post.post_to_wordpress,
                 }
             )
-        
+
         return jsonify({"type": "success", "debug_info": debug_info})
-        
+
     except Exception as e:
         return jsonify(
             {"type": "error", "message": f"Error getting debug info: {str(e)}"}
@@ -1428,40 +1433,47 @@ def test_datetime_comparison():
     """Test datetime comparison logic"""
     try:
         now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
-        
+
         # Get all scheduled posts
         all_scheduled = Blog.query.filter(
-            Blog.status == 'scheduled',
-            Blog.post_to_wordpress == True
+            Blog.status == "scheduled", Blog.post_to_wordpress == True
         ).all()
-        
+
         comparison_results = []
-        
+
         for post in all_scheduled:
             scheduled_time = post.scheduled_at
             is_due = scheduled_time <= now if scheduled_time else False
-            
-            comparison_results.append({
-                'id': post.id,
-                'title': post.title,
-                'scheduled_at': scheduled_time.isoformat() if scheduled_time else None,
-                'current_time': now.isoformat(),
-                'scheduled_time_type': str(type(scheduled_time)),
-                'current_time_type': str(type(now)),
-                'is_due': is_due,
-                'posted_to_wordpress': post.posted_to_wordpress,
-                'status': post.status
-            })
-        
-        return jsonify({
-            "type": "success",
-            "current_time": now.isoformat(),
-            "comparison_results": comparison_results,
-            "total_scheduled": len(all_scheduled)
-        })
-        
+
+            comparison_results.append(
+                {
+                    "id": post.id,
+                    "title": post.title,
+                    "scheduled_at": (
+                        scheduled_time.isoformat() if scheduled_time else None
+                    ),
+                    "current_time": now.isoformat(),
+                    "scheduled_time_type": str(type(scheduled_time)),
+                    "current_time_type": str(type(now)),
+                    "is_due": is_due,
+                    "posted_to_wordpress": post.posted_to_wordpress,
+                    "status": post.status,
+                }
+            )
+
+        return jsonify(
+            {
+                "type": "success",
+                "current_time": now.isoformat(),
+                "comparison_results": comparison_results,
+                "total_scheduled": len(all_scheduled),
+            }
+        )
+
     except Exception as e:
-        return jsonify({"type": "error", "message": f"Error testing datetime comparison: {str(e)}"})
+        return jsonify(
+            {"type": "error", "message": f"Error testing datetime comparison: {str(e)}"}
+        )
 
 
 def get_last_working_day_of_month(year, month):
@@ -1469,362 +1481,236 @@ def get_last_working_day_of_month(year, month):
     # Get the last day of the month
     last_day = calendar.monthrange(year, month)[1]
     last_date = datetime(year, month, last_day)
-    
+
     # If it's already a weekday (Monday=0, Sunday=6), return it
     if last_date.weekday() < 5:  # Monday to Friday
         return last_date
-    
+
     # Otherwise, go back to the previous Friday
     days_to_subtract = last_date.weekday() - 4  # 4 = Friday
     if days_to_subtract < 0:
-        days_to_subtract += 7  # If it's Saturday, go back 1 day; if Sunday, go back 2 days
-    
+        days_to_subtract += (
+            7  # If it's Saturday, go back 1 day; if Sunday, go back 2 days
+        )
+
     return last_date - timedelta(days=days_to_subtract)
 
-@main.route("/api/recurring-newsletter/<source>", methods=["GET", "POST"])
-@login_required
-def recurring_newsletter_settings(source):
-    """Get or set recurring newsletter settings for a specific source"""
-    if source not in ['local', 'wordpress']:
-        return jsonify({"type": "error", "message": "Invalid source"})
-    
-    if request.method == "GET":
-        # Get current settings
-        settings_key = f"recurring_newsletter_{source}"
-        setting = Settings.query.filter_by(key=settings_key).first()
-        
-        if setting:
-            try:
-                settings_data = json.loads(setting.value)
-                return jsonify({"type": "success", "settings": settings_data})
-            except:
-                return jsonify({"type": "error", "message": "Invalid settings format"})
-        else:
-            return jsonify({"type": "success", "settings": None})
-    
-    elif request.method == "POST":
-        # Save settings
-        send_time = request.form.get('send_time', '09:00')
-        status = request.form.get('status', 'active')
-        
-        settings_data = {
-            'send_time': send_time,
-            'status': status,
-            'source': source,
-            'created_at': datetime.now().isoformat()
-        }
-        
-        settings_key = f"recurring_newsletter_{source}"
-        setting = Settings.query.filter_by(key=settings_key).first()
-        
-        if setting:
-            setting.value = json.dumps(settings_data)
-        else:
-            setting = Settings(key=settings_key, value=json.dumps(settings_data))
-            db.session.add(setting)
-        
-        db.session.commit()
-        
-        # Update scheduler if status is active
-        if status == 'active':
-            update_recurring_newsletter_job(source, send_time)
-        else:
-            remove_recurring_newsletter_job(source)
-        
-        return jsonify({
-            "type": "success", 
-            "message": f"Recurring {source} newsletter settings saved successfully"
-        })
 
-@main.route("/api/recurring-newsletter/settings")
-@login_required
-def get_all_recurring_settings():
-    """Get all recurring newsletter settings"""
-    try:
-        local_setting = Settings.query.filter_by(key="recurring_newsletter_local").first()
-        wordpress_setting = Settings.query.filter_by(key="recurring_newsletter_wordpress").first()
-        
-        settings = {}
-        
-        if local_setting:
-            try:
-                settings['local'] = json.loads(local_setting.value)
-            except:
-                settings['local'] = None
-        
-        if wordpress_setting:
-            try:
-                settings['wordpress'] = json.loads(wordpress_setting.value)
-            except:
-                settings['wordpress'] = None
-        
-        return jsonify({"type": "success", "settings": settings})
-        
-    except Exception as e:
-        return jsonify({"type": "error", "message": str(e)})
-
-def update_recurring_newsletter_job(source, send_time):
-    """Update or add a recurring newsletter job to the scheduler"""
-    try:
-        from app import scheduler
-        
-        job_id = f"recurring_newsletter_{source}"
-        
-        # Remove existing job if it exists
-        try:
-            scheduler.remove_job(job_id)
-        except:
-            pass
-        
-        # Parse send time
-        hour, minute = map(int, send_time.split(':'))
-        
-        # Add new job that runs on the last working day of each month
-        scheduler.add_job(
-            func=send_recurring_newsletter,
-            trigger='cron',
-            args=[source],
-            hour=hour,
-            minute=minute,
-            day='last',
-            id=job_id,
-            replace_existing=True
-        )
-        
-        log_error(f"Recurring newsletter job updated for {source} at {send_time}")
-        
-    except Exception as e:
-        log_error(f"Error updating recurring newsletter job: {str(e)}")
-
-def remove_recurring_newsletter_job(source):
-    """Remove a recurring newsletter job from the scheduler"""
-    try:
-        from app import scheduler
-        
-        job_id = f"recurring_newsletter_{source}"
-        scheduler.remove_job(job_id)
-        
-        log_error(f"Recurring newsletter job removed for {source}")
-        
-    except Exception as e:
-        log_error(f"Error removing recurring newsletter job: {str(e)}")
-
-def send_recurring_newsletter(source):
-    """Send recurring newsletter for the specified source"""
-    try:
-        # Check if this is actually the last working day
-        now = datetime.now()
-        last_working_day = get_last_working_day_of_month(now.year, now.month)
-        
-        # Only send if today is the last working day
-        if now.date() != last_working_day.date():
-            log_error(f"Recurring newsletter not sent - today ({now.date()}) is not the last working day ({last_working_day.date()})")
-            return
-        
-        # Check if settings are active
-        settings_key = f"recurring_newsletter_{source}"
-        setting = Settings.query.filter_by(key=settings_key).first()
-        
-        if not setting:
-            log_error(f"No recurring newsletter settings found for {source}")
-            return
-        
-        try:
-            settings_data = json.loads(setting.value)
-            if settings_data.get('status') != 'active':
-                log_error(f"Recurring newsletter for {source} is not active")
-                return
-        except:
-            log_error(f"Invalid recurring newsletter settings for {source}")
-            return
-        
-        # Send the newsletter
-        log_error(f"Sending recurring newsletter for {source}")
-        
-        # Use the existing send_newsletter logic
-        if source == 'local':
-            send_newsletter_from_local_posts()
-        elif source == 'wordpress':
-            send_newsletter_from_wordpress_posts()
-            
-    except Exception as e:
-        log_error(f"Error sending recurring newsletter for {source}: {str(e)}")
-
+@main.route("/send-local-newsletter", methods=["GET"])
 def send_newsletter_from_local_posts():
     """Send newsletter using local posts from this month"""
     try:
         # Get this month's posts
         now = datetime.now()
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
-        blogs = Blog.query.filter(
-            Blog.created_at >= start_of_month,
-            Blog.status == 'published'
-        ).order_by(Blog.created_at.desc()).limit(10).all()
-        
+
+        blogs = (
+            Blog.query.filter(
+                Blog.created_at >= start_of_month, Blog.status == "published"
+            )
+            .order_by(Blog.created_at.desc())
+            .limit(10)
+            .all()
+        )
+
         if not blogs:
             log_error("No local posts found for this month's newsletter")
             return
-        
+
         # Get email subscribers
         emails = NewsletterEmail.query.filter_by(is_active=True).all()
         if not emails:
             log_error("No active email subscribers found")
             return
-        
+
         # Get settings
         settings = {s.key: s.value for s in Settings.query.all()}
-        email_starting = settings.get('email_starting', '<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>')
-        email_ending = settings.get('email_ending', '<p><em>Thank you for subscribing to our newsletter!</em></p>')
-        
+        email_starting = settings.get(
+            "email_starting",
+            "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>",
+        )
+        email_ending = settings.get(
+            "email_ending",
+            "<p><em>Thank you for subscribing to our newsletter!</em></p>",
+        )
+
         # Build email content
         post_html = ""
         for post in blogs:
-            snippet = post.content[:200] + "..." if len(post.content) > 200 else post.content
+            snippet = (
+                post.content[:200] + "..." if len(post.content) > 200 else post.content
+            )
             post_html += f"<p><strong>{post.title}</strong><br>{snippet}</p><hr>"
-        
+
         email_body = email_starting + post_html + email_ending
-        
+
         # Send emails
         send_newsletter_emails(emails, "Monthly Newsletter", email_body, settings)
-        
+
         log_error(f"Recurring local newsletter sent to {len(emails)} subscribers")
-        
+
     except Exception as e:
         log_error(f"Error sending recurring local newsletter: {str(e)}")
 
+
+@main.route("/send-wordpress-newsletter", methods=["GET"])
 def send_newsletter_from_wordpress_posts():
     """Send newsletter using WordPress posts from this month"""
     try:
         # Get WordPress settings
         settings = {s.key: s.value for s in Settings.query.all()}
-        wp_url = settings.get('wp_site_url', '').rstrip('/')
-        
+        wp_url = settings.get("wp_site_url", "").rstrip("/")
+
         if not wp_url:
             log_error("WordPress URL not configured")
             return
-        
+
         # Fetch WordPress posts from this month
         now = datetime.now()
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
+
         api_url = f"{wp_url}/wp-json/wp/v2/posts"
         params = {
-            'after': start_of_month.isoformat(),
-            'per_page': 10,
-            'orderby': 'date',
-            'order': 'desc'
+            "after": start_of_month.isoformat(),
+            "per_page": 10,
+            "orderby": "date",
+            "order": "desc",
         }
-        
+
         response = requests.get(api_url, params=params, timeout=10)
-        
+
         if response.status_code != 200:
             log_error(f"Failed to fetch WordPress posts: {response.status_code}")
             return
-        
+
         posts = response.json()
-        
+
         if not posts:
             log_error("No WordPress posts found for this month")
             return
-        
+
         # Get email subscribers
         emails = NewsletterEmail.query.filter_by(is_active=True).all()
         if not emails:
             log_error("No active email subscribers found")
             return
-        
+
         # Get email settings
-        email_starting = settings.get('email_starting', '<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>')
-        email_ending = settings.get('email_ending', '<p><em>Thank you for subscribing to our newsletter!</em></p>')
-        
+        email_starting = settings.get(
+            "email_starting",
+            "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>",
+        )
+        email_ending = settings.get(
+            "email_ending",
+            "<p><em>Thank you for subscribing to our newsletter!</em></p>",
+        )
+
         # Build email content
         post_html = ""
         for post in posts:
-            title = post.get('title', {}).get('rendered', 'Untitled')
-            content = post.get('excerpt', {}).get('rendered', '') or post.get('content', {}).get('rendered', '')
-            post_url = post.get('link', '#')
-            
+            title = post.get("title", {}).get("rendered", "Untitled")
+            content = post.get("excerpt", {}).get("rendered", "") or post.get(
+                "content", {}
+            ).get("rendered", "")
+            post_url = post.get("link", "#")
+
             # Clean HTML content
             from bs4 import BeautifulSoup
-            soup = BeautifulSoup(content, 'html.parser')
-            clean_content = soup.get_text()[:200] + "..." if len(soup.get_text()) > 200 else soup.get_text()
-            
+
+            soup = BeautifulSoup(content, "html.parser")
+            clean_content = (
+                soup.get_text()[:200] + "..."
+                if len(soup.get_text()) > 200
+                else soup.get_text()
+            )
+
             post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
-        
+
         email_body = email_starting + post_html + email_ending
-        
+
         # Send emails
         send_newsletter_emails(emails, "Monthly Newsletter", email_body, settings)
-        
+
         log_error(f"Recurring WordPress newsletter sent to {len(emails)} subscribers")
-        
+
     except Exception as e:
         log_error(f"Error sending recurring WordPress newsletter: {str(e)}")
+
 
 def send_newsletter_emails(emails, subject, email_body, settings):
     """Send newsletter emails to subscribers"""
     try:
-        smtp_server = settings.get('smtp_server')
-        smtp_port = settings.get('smtp_port')
-        smtp_username = settings.get('smtp_username')
-        smtp_password = settings.get('smtp_password')
-        sender_email = settings.get('sender_email')
-        
-        if not all([smtp_server, smtp_port, smtp_username, smtp_password, sender_email]):
+        smtp_server = settings.get("smtp_server")
+        smtp_port = settings.get("smtp_port")
+        smtp_username = settings.get("smtp_username")
+        smtp_password = settings.get("smtp_password")
+        sender_email = settings.get("sender_email")
+
+        if not all(
+            [smtp_server, smtp_port, smtp_username, smtp_password, sender_email]
+        ):
             log_error("SMTP settings incomplete")
             return
-        
+
         # Create message
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = sender_email
+
         # Add HTML content
-        html_part = MIMEText(email_body, 'html')
+        html_part = MIMEText(email_body, "html")
         msg.attach(html_part)
-        
+
         # Send to each subscriber
         for email_obj in emails:
             try:
-                msg['To'] = email_obj.email
-                
+                msg["To"] = email_obj.email
+
                 with smtplib.SMTP(smtp_server, int(smtp_port)) as server:
                     server.starttls()
                     server.login(smtp_username, smtp_password)
                     server.sendmail(sender_email, email_obj.email, msg.as_string())
-                
+
                 log_error(f"Newsletter sent to {email_obj.email}")
-                
+
             except Exception as e:
                 log_error(f"Failed to send newsletter to {email_obj.email}: {str(e)}")
-                
+
     except Exception as e:
         log_error(f"Error in send_newsletter_emails: {str(e)}")
+
 
 @main.route("/test-recurring-newsletter/<source>")
 @login_required
 def test_recurring_newsletter(source):
     """Test the recurring newsletter functionality"""
     try:
-        if source not in ['local', 'wordpress']:
+        if source not in ["local", "wordpress"]:
             return jsonify({"type": "error", "message": "Invalid source"})
-        
+
         # Force send the newsletter regardless of date
         log_error(f"Testing recurring newsletter for {source}")
-        
-        if source == 'local':
+
+        if source == "local":
             send_newsletter_from_local_posts()
-        elif source == 'wordpress':
+        elif source == "wordpress":
             send_newsletter_from_wordpress_posts()
-        
-        return jsonify({
-            "type": "success", 
-            "message": f"Test recurring newsletter for {source} completed. Check logs for details."
-        })
-        
+
+        return jsonify(
+            {
+                "type": "success",
+                "message": f"Test recurring newsletter for {source} completed. Check logs for details.",
+            }
+        )
+
     except Exception as e:
-        return jsonify({"type": "error", "message": f"Error testing recurring newsletter: {str(e)}"})
+        return jsonify(
+            {
+                "type": "error",
+                "message": f"Error testing recurring newsletter: {str(e)}",
+            }
+        )
+
 
 @main.route("/get-last-working-day/<int:year>/<int:month>")
 @login_required
@@ -1832,12 +1718,105 @@ def get_last_working_day(year, month):
     """Get the last working day for a specific month (for testing)"""
     try:
         last_working_day = get_last_working_day_of_month(year, month)
-        return jsonify({
-            "type": "success",
-            "year": year,
-            "month": month,
-            "last_working_day": last_working_day.isoformat(),
-            "day_of_week": last_working_day.strftime('%A')
-        })
+        return jsonify(
+            {
+                "type": "success",
+                "year": year,
+                "month": month,
+                "last_working_day": last_working_day.isoformat(),
+                "day_of_week": last_working_day.strftime("%A"),
+            }
+        )
     except Exception as e:
         return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/publish-scheduled-blogs", methods=["GET"])
+def publish_scheduled_blogs():
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        settings = {s.key: s.value for s in Settings.query.all()}
+
+        # Find scheduled blogs that are due
+        blogs = Blog.query.filter(
+            Blog.status == "scheduled",
+            Blog.scheduled_at != None,
+            Blog.scheduled_at <= now,  # Now comparing local time with database time
+            Blog.post_to_wordpress == True,
+            Blog.posted_to_wordpress == False,
+        ).all()
+
+        for blog in blogs:
+            try:
+                # Post to WordPress
+                success, error = post_to_wordpress(blog, settings)
+                if success:
+                    blog.status = "published"
+                    db.session.commit()
+                    log_error(f"Successfully published blog ID {blog.id} to WordPress")
+
+                else:
+                    log_error(
+                        f"Failed to publish blog ID {blog.id} to WordPress: {error}"
+                    )
+
+            except Exception as e:
+                log_error(f"Exception processing scheduled blog ID {blog.id}: {str(e)}")
+
+    except Exception as e:
+        log_error(f"Scheduler error: {str(e)}")
+
+
+@main.route("/upload-image", methods=["POST"])
+def upload_image():
+    # Use 'file' instead of 'upload'
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    image = request.files["file"]
+    filename = image.filename or "upload.jpg"
+    settings = {s.key: s.value for s in Settings.query.all()}
+    wp_url = settings.get("wp_site_url", "").rstrip("/")
+    wp_user = settings.get("wp_username", "")
+    wp_app_password = settings.get("wp_app_password", "")
+    wp_media_url = wp_url + "/wp-json/wp/v2/media"
+
+    if not (wp_url and wp_user and wp_app_password):
+        return jsonify(
+            {"type": "error", "message": "WordPress credentials not configured"}
+        )  # Detect MIME type
+    import mimetypes
+
+    mime_type, _ = mimetypes.guess_type(filename)
+    if not mime_type:
+        mime_type = "image/jpeg"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": mime_type,
+    }
+
+    from requests.auth import HTTPBasicAuth
+
+    response = requests.post(
+        wp_media_url,
+        headers=headers,
+        data=image.read(),
+        auth=HTTPBasicAuth(wp_user, wp_app_password),
+        timeout=10,
+    )
+
+    if response.status_code == 201:
+        data = response.json()
+        return jsonify({"url": data.get("source_url")})
+    else:
+        return (
+            jsonify(
+                {
+                    "error": "Failed to upload to WordPress",
+                    "status_code": response.status_code,
+                    "details": response.text,
+                }
+            ),
+            500,
+        )

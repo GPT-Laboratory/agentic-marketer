@@ -12,16 +12,10 @@
     {% endif %}
     {% endwith %}
 
-    {% if settings.get('log') %}
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-        <strong>Error Log:</strong><br>
-        <pre style="white-space: pre-wrap;">{{ settings.get('log') }}</pre>
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-    {% endif %}
+   
 
     <!-- Scheduler Testing -->
-    <div class="card shadow mb-4">
+    <!-- <div class="card shadow mb-4">
         <div class="card-header py-3">
             <h6 class="m-0 font-weight-bold text-primary">Scheduler Testing</h6>
         </div>
@@ -57,7 +51,7 @@
             </div>
             <div id="schedulerResults" class="mt-3"></div>
         </div>
-    </div>
+    </div> -->
 
     <!-- Statistics Cards -->
     <div class="row">
@@ -96,6 +90,13 @@
         </div>
 
     </div>
+    {% if settings.get('log') %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>Error Log:</strong><br>
+        <pre style="white-space: pre-wrap;">{{ settings.get('log') }}</pre>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endif %}
 
 
 </div>
