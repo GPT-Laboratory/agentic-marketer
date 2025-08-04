@@ -965,8 +965,15 @@ def api_manage_faq(faq_id):
 @main.route("/admin/blogs")
 @login_required
 def admin_blogs():
-    blogs = Blog.query.order_by(Blog.created_at.desc()).all()
+    blogs = Blog.query.filter_by(content_type='blog').order_by(Blog.created_at.desc()).all()
     return render_template("admin/blogs.html", blogs=blogs)
+
+
+@main.route("/admin/social-posts")
+@login_required
+def admin_social_posts():
+    social_posts = Blog.query.filter_by(content_type='social').order_by(Blog.created_at.desc()).all()
+    return render_template("admin/social_posts.html", social_posts=social_posts)
 
 
 @main.route("/admin/blogs/add", methods=["POST"])
@@ -985,7 +992,6 @@ def admin_add_blog():
                 scheduled_at = datetime.strptime(
                     scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
                 )
-                # scheduled_at = datetime.strptime(scheduled_at_str.strip(), "%Y-%m-%dT%H:%M")
             except ValueError:
                 return jsonify(
                     {
@@ -1001,14 +1007,17 @@ def admin_add_blog():
             user_id=current_user.id,
             scheduled_at=scheduled_at,
             status=status,
+            content_type='blog',
             post_to_wordpress=post_to_wordpress_flag,
         )
         db.session.add(blog)
         db.session.commit()
+        
         # Publish now if needed
         if status == "published" and post_to_wordpress_flag:
             settings = {s.key: s.value for s in Settings.query.all()}
             post_to_wordpress(blog, settings)
+                
         return jsonify({"type": "success", "message": "Blog post created."})
     except Exception as e:
         db.session.rollback()
@@ -1019,7 +1028,7 @@ def admin_add_blog():
 @login_required
 def api_blog(blog_id):
     blog = db.session.get(Blog, blog_id)
-    if not blog:
+    if not blog or blog.content_type != 'blog':
         return jsonify({"type": "error", "message": "Blog not found"}), 404
     if request.method == "GET":
         return jsonify(
@@ -1059,14 +1068,12 @@ def api_blog(blog_id):
             blog.post_to_wordpress = bool(request.form.get("post_to_wordpress"))
             blog.status = "published" if not scheduled_at else "scheduled"
             db.session.commit()
+            
             # Publish now if needed
-            if (
-                blog.status == "published"
-                and blog.post_to_wordpress
-                and not blog.posted_to_wordpress
-            ):
+            if blog.status == "published" and blog.post_to_wordpress and not blog.posted_to_wordpress:
                 settings = {s.key: s.value for s in Settings.query.all()}
                 post_to_wordpress(blog, settings)
+                    
             return jsonify({"type": "success", "message": "Blog post updated."})
         except Exception as e:
             db.session.rollback()
@@ -1185,6 +1192,175 @@ def delete_blog(blog_id):
         return redirect(url_for("main.admin_blogs"))
 
 
+@main.route("/admin/social-posts/add", methods=["POST"])
+@login_required
+def admin_add_social_post():
+    try:
+        title = request.form.get("title")
+        content = request.form.get("content")
+        scheduled_at_str = request.form.get("scheduled_at")
+        post_to_linkedin_flag = bool(request.form.get("post_to_linkedin"))
+        post_to_twitter_flag = bool(request.form.get("post_to_twitter"))
+
+        # Handle image upload
+        image_path = None
+        if 'image' in request.files:
+            image_file = request.files['image']
+            if image_file and image_file.filename:
+                # Save image to static/uploads directory
+                upload_dir = os.path.join(current_app.static_folder, "uploads")
+                os.makedirs(upload_dir, exist_ok=True)
+                filename = secure_filename(image_file.filename)
+                image_path = os.path.join(upload_dir, filename)
+                image_file.save(image_path)
+                # Store relative path in database
+                image_path = f"uploads/{filename}"
+
+        # Parse scheduled_at datetime
+        scheduled_at = None
+        if scheduled_at_str and scheduled_at_str.strip():
+            try:
+                scheduled_at = datetime.strptime(
+                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                )
+            except ValueError:
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                    }
+                )
+
+        status = "published" if not scheduled_at else "scheduled"
+        social_post = Blog(
+            title=title,
+            content=content,
+            user_id=current_user.id,
+            scheduled_at=scheduled_at,
+            status=status,
+            content_type='social',
+            image_path=image_path,
+            post_to_linkedin=post_to_linkedin_flag,
+            post_to_x=post_to_twitter_flag,
+        )
+        db.session.add(social_post)
+        db.session.commit()
+        
+        # Publish now if needed
+        if status == "published":
+            settings = {s.key: s.value for s in Settings.query.all()}
+            if post_to_linkedin_flag:
+                post_to_linkedin(social_post, settings)
+            if post_to_twitter_flag:
+                from app import post_to_twitter
+                post_to_twitter(social_post, settings)
+                
+        return jsonify({"type": "success", "message": "Social post created."})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/api/social-post/<int:social_post_id>", methods=["GET", "PUT"])
+@login_required
+def api_social_post(social_post_id):
+    social_post = db.session.get(Blog, social_post_id)
+    if not social_post or social_post.content_type != 'social':
+        return jsonify({"type": "error", "message": "Social post not found"}), 404
+    if request.method == "GET":
+        return jsonify(
+            {
+                "title": social_post.title,
+                "content": social_post.content,
+                "scheduled_at": (
+                    social_post.scheduled_at.strftime("%Y-%m-%d %H:%M")
+                    if social_post.scheduled_at
+                    else ""
+                ),
+                "post_to_linkedin": social_post.post_to_linkedin,
+                "post_to_twitter": social_post.post_to_x,
+                "image_path": url_for('static', filename=social_post.image_path),
+                # previewable image path
+                
+            }
+        )
+    elif request.method == "PUT":
+        try:
+            social_post.title = request.form.get("title")
+            social_post.content = request.form.get("content")
+            scheduled_at_str = request.form.get("scheduled_at")
+
+            # Handle image upload
+            if 'image' in request.files:
+                image_file = request.files['image']
+                if image_file and image_file.filename:
+                    # Save image to static/uploads directory
+                    upload_dir = os.path.join(current_app.static_folder, "uploads")
+                    os.makedirs(upload_dir, exist_ok=True)
+                    filename = secure_filename(image_file.filename)
+                    image_path = os.path.join(upload_dir, filename)
+                    image_file.save(image_path)
+                    # Store relative path in database
+                    social_post.image_path = f"uploads/{filename}"
+
+            # Parse scheduled_at datetime
+            scheduled_at = None
+            if scheduled_at_str and scheduled_at_str.strip():
+                try:
+                    scheduled_at = datetime.strptime(
+                        scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                    )
+                except ValueError:
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                        }
+                    )
+
+            social_post.scheduled_at = scheduled_at
+            social_post.post_to_linkedin = bool(request.form.get("post_to_linkedin"))
+            social_post.post_to_x = bool(request.form.get("post_to_twitter"))
+            social_post.status = "published" if not scheduled_at else "scheduled"
+            db.session.commit()
+            
+            # Publish now if needed
+            if (
+                social_post.status == "published"
+                and (social_post.post_to_linkedin or social_post.post_to_x)
+            ):
+                settings = {s.key: s.value for s in Settings.query.all()}
+                if social_post.post_to_linkedin and not social_post.posted_to_linkedin:
+                    
+                    post_to_linkedin(social_post, settings)
+                if social_post.post_to_x and not social_post.posted_to_x:
+                    from app import post_to_twitter
+                    post_to_twitter(social_post, settings)
+                    
+            return jsonify({"type": "success", "message": "Social post updated."})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/api/social-post/<int:social_post_id>", methods=["POST"])
+@login_required
+def delete_social_post(social_post_id):
+    try:
+        social_post = db.session.get(Blog, social_post_id)
+        if not social_post or social_post.content_type != 'social':
+            return jsonify({"type": "error", "message": "Social post not found"}), 404
+        db.session.delete(social_post)
+        db.session.commit()
+        flash("Social post deleted successfully.", "success")
+        return redirect(url_for("main.admin_social_posts"))
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error deleting social post {social_post_id}: {str(e)}")
+        flash("Error deleting social post.", "error")
+        return redirect(url_for("main.admin_social_posts"))
+
+
 def generate_ai_blog(content):
     openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
     if not openai_key or not openai_key.value:
@@ -1272,6 +1448,102 @@ def test_scheduler():
         )
     except Exception as e:
         return jsonify({"type": "error", "message": f"Scheduler test failed: {str(e)}"})
+
+
+@main.route("/test-social-scheduler")
+@login_required
+def test_social_scheduler():
+    """Test the social posts scheduler manually"""
+    try:
+        publish_scheduled_social_posts()
+        return jsonify(
+            {
+                "type": "success",
+                "message": "Social posts scheduler test completed. Check logs for details.",
+            }
+        )
+    except Exception as e:
+        return jsonify({"type": "error", "message": f"Social posts scheduler test failed: {str(e)}"})
+
+
+@main.route("/test-linkedin-posting")
+@login_required
+def test_linkedin_posting():
+    """Test LinkedIn posting functionality"""
+    try:
+        settings = {s.key: s.value for s in Settings.query.all()}
+        
+        # Create a test social post
+        test_post = Blog(
+            title="Test LinkedIn Post",
+            content="This is a test post from the application to verify LinkedIn integration.",
+            user_id=current_user.id,
+            status="published",
+            content_type='social',
+            post_to_linkedin=True,
+            post_to_x=False
+        )
+        db.session.add(test_post)
+        db.session.commit()
+        
+        # Try to post to LinkedIn
+        
+        success, error = post_to_linkedin(test_post, settings)
+        
+        if success:
+            return jsonify({
+                "type": "success",
+                "message": "LinkedIn posting test successful!",
+                "post_id": test_post.linkedin_post_id
+            })
+        else:
+            return jsonify({
+                "type": "error",
+                "message": f"LinkedIn posting test failed: {error}"
+            })
+            
+    except Exception as e:
+        return jsonify({"type": "error", "message": f"LinkedIn posting test failed: {str(e)}"})
+
+
+@main.route("/test-twitter-posting")
+@login_required
+def test_twitter_posting():
+    """Test Twitter posting functionality"""
+    try:
+        settings = {s.key: s.value for s in Settings.query.all()}
+        
+        # Create a test social post
+        test_post = Blog(
+            title="Test Twitter Post",
+            content="This is a test tweet from the application to verify Twitter integration.",
+            user_id=current_user.id,
+            status="published",
+            content_type='social',
+            post_to_linkedin=False,
+            post_to_x=True
+        )
+        db.session.add(test_post)
+        db.session.commit()
+        
+        # Try to post to Twitter
+        from app import post_to_twitter
+        success, error = post_to_twitter(test_post, settings)
+        
+        if success:
+            return jsonify({
+                "type": "success",
+                "message": "Twitter posting test successful!",
+                "post_id": test_post.x_post_id
+            })
+        else:
+            return jsonify({
+                "type": "error",
+                "message": f"Twitter posting test failed: {error}"
+            })
+            
+    except Exception as e:
+        return jsonify({"type": "error", "message": f"Twitter posting test failed: {str(e)}"})
 
 
 @main.route("/check-scheduled-posts")
@@ -1767,6 +2039,54 @@ def publish_scheduled_blogs():
         log_error(f"Scheduler error: {str(e)}")
 
 
+@main.route("/publish-scheduled-social-posts", methods=["GET"])
+def publish_scheduled_social_posts():
+    """Publish scheduled social posts to LinkedIn and Twitter"""
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        settings = {s.key: s.value for s in Settings.query.all()}
+
+        # Find scheduled social posts that are due
+        social_posts = Blog.query.filter(
+            Blog.content_type == 'social',
+            Blog.status == "scheduled",
+            Blog.scheduled_at != None,
+            Blog.scheduled_at <= now,
+        ).all()
+
+        for social_post in social_posts:
+            try:
+                # Post to LinkedIn if enabled and not already posted
+                if social_post.post_to_linkedin and not social_post.posted_to_linkedin:
+                    
+                    success, error = post_to_linkedin(social_post, settings)
+                    if success:
+                        log_error(f"Successfully published social post ID {social_post.id} to LinkedIn")
+                    else:
+                        log_error(f"Failed to publish social post ID {social_post.id} to LinkedIn: {error}")
+
+                # Post to Twitter if enabled and not already posted
+                if social_post.post_to_x and not social_post.posted_to_x:
+                    from app import post_to_twitter
+                    success, error = post_to_twitter(social_post, settings)
+                    if success:
+                        log_error(f"Successfully published social post ID {social_post.id} to Twitter")
+                    else:
+                        log_error(f"Failed to publish social post ID {social_post.id} to Twitter: {error}")
+
+                # Update status to published if all enabled platforms are posted
+                if ((not social_post.post_to_linkedin or social_post.posted_to_linkedin) and 
+                    (not social_post.post_to_x or social_post.posted_to_x)):
+                    social_post.status = "published"
+                    db.session.commit()
+
+            except Exception as e:
+                log_error(f"Exception processing scheduled social post ID {social_post.id}: {str(e)}")
+
+    except Exception as e:
+        log_error(f"Social posts scheduler error: {str(e)}")
+
+
 @main.route("/upload-image", methods=["POST"])
 def upload_image():
     # Use 'file' instead of 'upload'
@@ -1820,3 +2140,137 @@ def upload_image():
             ),
             500,
         )
+
+def post_to_linkedin(blog, settings):
+    """Post to LinkedIn company page"""
+    try:
+        access_token = settings.get("linkedin_access_token")
+        org_id = settings.get("linkedin_org_id")
+        org_id = f"urn:li:organization:{org_id}"
+
+        if not access_token or not org_id:
+            log_error(f"LinkedIn credentials missing for Blog ID: {blog.id}")
+            return False, "LinkedIn credentials not set."
+
+        # LinkedIn API endpoint for company posts
+        # api_url = f"https://api.linkedin.com/v2/organizations/{org_id}/shares"
+        api_url = "https://api.linkedin.com/v2/ugcPosts"
+
+        # Prepare the post data
+        post_data = {
+            "author": f"urn:li:organization:{org_id}",
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": {"text": blog.content},
+                    "shareMediaCategory": "NONE",
+                }
+            },
+            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+        }
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-Restli-Protocol-Version": "2.0.0",
+        }
+
+        # If blog has an image, upload it first and add to post
+        if blog.image_path:
+            try:
+                # Step 1: Register Image Upload
+                upload_request = {
+                    "registerUploadRequest": {
+                        "owner": org_id,
+                        "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
+                        "serviceRelationships": [
+                            {
+                                "relationshipType": "OWNER",
+                                "identifier": "urn:li:userGeneratedContent",
+                            }
+                        ],
+                    }
+                }
+
+                res = requests.post(
+                    "https://api.linkedin.com/v2/assets?action=registerUpload",
+                    headers=headers,
+                    json=upload_request,
+                )
+                if not res.ok:
+                    return {"success": False, "error": res.json()}
+
+                upload_data = res.json()
+                upload_url = upload_data["value"]["uploadMechanism"][
+                    "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
+                ]["uploadUrl"]
+                image_urn = upload_data["value"]["asset"]
+
+                # Step 2: Upload the image to LinkedIn
+                mime_type = mimetypes.guess_type(blog.image_path)[0] or "image/jpeg"
+                image_path = os.path.join(current_app.static_folder, blog.image_path)
+                with open(image_path, "rb") as image_file:
+                    upload_res = requests.put(
+                        upload_url, data=image_file, headers={"Content-Type": mime_type}
+                    )
+                if upload_res.status_code not in (200, 201):
+                    return {
+                        "success": False,
+                        "error": "Image upload failed",
+                        "details": upload_res.text,
+                    }
+
+                # Step 3: Create Post with Image
+                post_data = {
+                    "author": org_id,
+                    "lifecycleState": "PUBLISHED",
+                    "specificContent": {
+                        "com.linkedin.ugc.ShareContent": {
+                            "shareCommentary": {"text": blog.content},
+                            "shareMediaCategory": "IMAGE",
+                            "media": [{"status": "READY", "media": image_urn}],
+                        }
+                    },
+                    "visibility": {
+                        "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+                    },
+                }
+            except Exception as e:
+                log_error(
+                    f"Failed to upload image to LinkedIn for Blog ID {blog.id}: {str(e)}"
+                )
+                # Continue without image
+
+        else:
+            post_data = {
+                "author": org_id,
+                "lifecycleState": "PUBLISHED",
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {
+                        "shareCommentary": {"text": blog.content},
+                        "shareMediaCategory": "NONE",
+                    }
+                },
+                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            }
+
+        response = requests.post(api_url, json=post_data, headers=headers, timeout=10)
+
+        if response.status_code in (200, 201):
+            post_id = response.json().get("id")
+            blog.posted_to_linkedin = True
+            blog.linkedin_post_id = str(post_id)
+            blog.linkedin_error = None
+            db.session.commit()
+            return True, None
+        else:
+            blog.linkedin_error = response.text
+            db.session.commit()
+            log_error(f"LinkedIn post failed for Blog ID {blog.id}: {response.text}")
+            return False, response.text
+
+    except Exception as e:
+        blog.linkedin_error = str(e)
+        db.session.commit()
+        log_error(f"Exception posting to LinkedIn for Blog ID {blog.id}: {str(e)}")
+        return False, str(e)
+

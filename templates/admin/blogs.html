@@ -42,8 +42,8 @@
                             blog.post_to_wordpress %}<span class="badge bg-warning">Pending</span>{% else %}-{% endif %}
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-info" onclick="editBlog({{ blog.id }})">
-                                <i class="fas fa-pencil-alt"></i>
+                            {% if not blog.posted_to_wordpress %}<button class="btn btn-sm btn-info" onclick="editBlog({{ blog.id }})">
+                                <i class="fas fa-pencil-alt"></i>{% endif %}
                             </button>
                             <form action="{{ url_for('main.delete_blog', blog_id=blog.id) }}" method="POST"
                                 class="d-inline" onsubmit="return confirm('Delete this blog?');">
@@ -167,17 +167,7 @@
             textContainer.classList.add("d-none");
         }
     });
-    let editor= document.getElementById('blogContent');
-    function openBlogModal() {
-        document.getElementById('blogForm').reset();
-        document.getElementById('blogModalLabel').innerText = 'New Blog Post';
-        if (editor){
-            $('#blogContent').summernote('code', '');
-        }
-        // document.getElementById('scheduledAt').value = '';
-        document.getElementById('postToWordpress').checked = false;
-        document.getElementById('blogForm').action = '/admin/blogs/add';
-    }
+
     function openAIBlogModal() {
         document.getElementById('aiblogForm').reset();
         document.getElementById('aiblogModalLabel').innerText = 'New AI Blog Post';
@@ -186,13 +176,21 @@
         document.getElementById('aiblogForm').action = '/admin/ai-blogs/add';
     }
 
+    function openBlogModal() {
+        document.getElementById('blogForm').reset();
+        document.getElementById('blogModalLabel').innerText = 'New Blog Post';
+        $('#blogContent').summernote('reset'); // optional clear
+        initializeEditor(); // 👈 this line is key
+        document.getElementById('postToWordpress').checked = false;
+        document.getElementById('blogForm').action = '/admin/blogs/add';
+    }
     function editBlog(id) {
         fetch(`/api/blog/${id}`)
             .then(response => response.json())
             .then(data => {
                 document.getElementById('blogTitle').value = data.title;
+                initializeEditor(); // 👈 init (with destroy if already there)
                 $('#blogContent').summernote('code', data.content);
-                // if (editor) editor.setData(data.content);
                 document.getElementById('scheduledAt').value = data.scheduled_at || '';
                 document.getElementById('postToWordpress').checked = data.post_to_wordpress;
                 document.getElementById('blogModalLabel').innerText = 'Edit Blog Post';
@@ -201,27 +199,33 @@
             });
     }
 
-    $('#blogContent').summernote({
-        placeholder: 'Write your blog here...',
-        height: 300,
-        callbacks: {
-            onImageUpload: function (files) {
-                const formData = new FormData();
-                formData.append('file', files[0]);
-
-                fetch('/upload-image', {
-                    method: 'POST',
-                    body: formData
-                })
-                    .then(res => res.json())
-                    .then(data => {
-                        
-                        $('#blogContent').summernote('insertImage', data.url);
-                    })
-                    .catch(err => console.error('Image upload failed:', err));
-            }
+    function initializeEditor() {
+        const $editor = $('#blogContent');
+        if ($editor.next().hasClass('note-editor')) {
+            $editor.summernote('destroy');
         }
-    });
+
+        $editor.summernote({
+            placeholder: 'Write your blog here...',
+            height: 300,
+            callbacks: {
+                onImageUpload: function (files) {
+                    const formData = new FormData();
+                    formData.append('file', files[0]);
+
+                    fetch('/upload-image', {
+                        method: 'POST',
+                        body: formData
+                    })
+                        .then(res => res.json())
+                        .then(data => {
+                            $editor.summernote('insertImage', data.url);
+                        })
+                        .catch(err => console.error('Image upload failed:', err));
+                }
+            }
+        });
+    }
 
     // Initialize flatpickr for both scheduling fields
     flatpickr('#scheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });

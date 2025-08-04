@@ -19,3 +19,4 @@ flask-migrate
 APScheduler
 python-dateutil
 flask_cors
+tweepy

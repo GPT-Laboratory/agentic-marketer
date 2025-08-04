@@ -46,6 +46,9 @@ class Blog(db.Model):
     scheduled_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(50), default='draft')  # draft, scheduled, published
     image_path = db.Column(db.String(255), nullable=True)
+    
+    # Content type: 'blog' for WordPress posts, 'social' for social media posts
+    content_type = db.Column(db.String(20), default='blog')  # 'blog' or 'social'
 
     # Platform flags
     post_to_wordpress = db.Column(db.Boolean, default=False)
@@ -66,6 +69,8 @@ class Blog(db.Model):
     wp_error = db.Column(db.Text, nullable=True)
     linkedin_error = db.Column(db.Text, nullable=True)
     x_error = db.Column(db.Text, nullable=True)
+
+
 
 class LinkedInPost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
