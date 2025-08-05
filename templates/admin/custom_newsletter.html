@@ -161,6 +161,9 @@ function setupEventListeners() {
     // Form submission
     document.getElementById('newsletterForm').addEventListener('submit', function(e) {
         e.preventDefault();
+        // id saveBtnText set to loading spinner
+        document.getElementById('saveBtnText').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        // document.getElementById('saveBtnText').textContent = 'Saving...';
         saveNewsletter();
     });
     
@@ -288,6 +291,7 @@ function saveNewsletter() {
     .then(data => {
         if (data.type === 'success') {
             toastr.success(data.message);
+            // document.getElementById('saveBtnText').textContent = 'Save & Send Newsletter';
             if (!isEditMode) {
                 // Redirect to newsletter management page
                 setTimeout(() => {
