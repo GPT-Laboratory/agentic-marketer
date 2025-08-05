@@ -23,6 +23,7 @@ from models import (
     LinkedInPost,
     TwitterPost,
     NewsletterEmail,
+    Newsletter,
 )
 from urllib.parse import urlparse
 
@@ -180,11 +181,13 @@ def admin_dashboard():
 
     users = User.query.all()
     faqs = FAQ.query.all()
+    newsletters = Newsletter.query.all()
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
         "admin/dashboard.html",
         users=users,
         faqs=faqs,
+        newsletters=newsletters,
         settings=settings,
     )
 
@@ -365,9 +368,10 @@ def platform_settings():
 @login_required
 def admin_newsletter_emails():
     emails = NewsletterEmail.query.order_by(NewsletterEmail.created_at.desc()).all()
+    newsletters = Newsletter.query.order_by(Newsletter.created_at.desc()).all()
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
-        "admin/newsletter_emails.html", emails=emails, settings=settings
+        "admin/newsletter_emails.html", emails=emails, newsletters=newsletters, settings=settings
     )
 
 
@@ -409,6 +413,315 @@ def delete_newsletter_email(email_id):
     db.session.commit()
     flash("Email deleted successfully.", "success")
     return redirect(url_for("main.admin_newsletter_emails"))
+
+
+@main.route("/admin/custom-newsletter")
+@login_required
+def custom_newsletter():
+    """Custom newsletter creation page"""
+    settings = {s.key: s.value for s in Settings.query.all()}
+    return render_template("admin/custom_newsletter.html", settings=settings)
+
+
+@main.route("/admin/custom-newsletter/create", methods=["POST"])
+@login_required
+def create_custom_newsletter():
+    """Create a new custom newsletter"""
+    try:
+        title = request.form.get("title")
+        subject = request.form.get("subject")
+        scheduled_at_str = request.form.get("scheduled_at")
+        selected_posts = request.form.get("selected_posts")  # JSON array of post IDs
+        email_starting = request.form.get("email_starting")
+        email_ending = request.form.get("email_ending")
+        
+        # Parse scheduled_at datetime
+        scheduled_at = None
+        if scheduled_at_str and scheduled_at_str.strip():
+            try:
+                # Handle datetime-local format (YYYY-MM-DDTHH:MM) and convert to expected format
+                date_str = scheduled_at_str.strip()
+                if 'T' in date_str:
+                    # Convert from datetime-local format to expected format
+                    date_str = date_str.replace('T', ' ')
+                scheduled_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+            except ValueError:
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                    }
+                )
+        
+        status = "scheduled" if scheduled_at else "draft"
+        
+        newsletter = Newsletter(
+            title=title,
+            subject=subject,
+            selected_posts=selected_posts,
+            scheduled_at=scheduled_at,
+            status=status,
+            created_by=current_user.id,
+            email_starting=email_starting,
+            email_ending=email_ending
+        )
+        
+        db.session.add(newsletter)
+        db.session.commit()
+        
+        # If no schedule is set, send the newsletter immediately
+        if not scheduled_at:
+            success, error = send_newsletter_from_custom(newsletter)
+            if success:
+                newsletter.status = "sent"
+                newsletter.sent_at = datetime.now()
+                db.session.commit()
+                return jsonify({"type": "success", "message": "Newsletter sent successfully!", "newsletter_id": newsletter.id})
+            else:
+                newsletter.error_message = error
+                db.session.commit()
+                return jsonify({"type": "error", "message": f"Newsletter created but failed to send: {error}", "newsletter_id": newsletter.id})
+        
+        return jsonify({"type": "success", "message": "Newsletter scheduled successfully.", "newsletter_id": newsletter.id})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/admin/custom-newsletter/<int:newsletter_id>", methods=["GET", "PUT", "DELETE"])
+@login_required
+def manage_custom_newsletter(newsletter_id):
+    """Manage a specific newsletter"""
+    newsletter = db.session.get(Newsletter, newsletter_id)
+    if not newsletter:
+        return jsonify({"type": "error", "message": "Newsletter not found"}), 404
+    
+    if request.method == "GET":
+        return jsonify({
+            "id": newsletter.id,
+            "title": newsletter.title,
+            "subject": newsletter.subject,
+            "scheduled_at": newsletter.scheduled_at.strftime("%Y-%m-%d %H:%M") if newsletter.scheduled_at else "",
+            "selected_posts": newsletter.selected_posts,
+            "email_starting": newsletter.email_starting,
+            "email_ending": newsletter.email_ending,
+            "status": newsletter.status
+        })
+    
+    elif request.method == "PUT":
+        try:
+            newsletter.title = request.form.get("title")
+            newsletter.subject = request.form.get("subject")
+            newsletter.selected_posts = request.form.get("selected_posts")
+            newsletter.email_starting = request.form.get("email_starting")
+            newsletter.email_ending = request.form.get("email_ending")
+            
+            scheduled_at_str = request.form.get("scheduled_at")
+            if scheduled_at_str and scheduled_at_str.strip():
+                try:
+                    # Handle datetime-local format (YYYY-MM-DDTHH:MM) and convert to expected format
+                    date_str = scheduled_at_str.strip()
+                    if 'T' in date_str:
+                        # Convert from datetime-local format to expected format
+                        date_str = date_str.replace('T', ' ')
+                    newsletter.scheduled_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                    newsletter.status = "scheduled"
+                except ValueError:
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                        }
+                    )
+            else:
+                newsletter.scheduled_at = None
+                newsletter.status = "draft"
+            
+            db.session.commit()
+            
+            # If no schedule is set, send the newsletter immediately
+            if not newsletter.scheduled_at:
+                success, error = send_newsletter_from_custom(newsletter)
+                if success:
+                    newsletter.status = "sent"
+                    newsletter.sent_at = datetime.now()
+                    db.session.commit()
+                    return jsonify({"type": "success", "message": "Newsletter sent successfully!"})
+                else:
+                    newsletter.error_message = error
+                    db.session.commit()
+                    return jsonify({"type": "error", "message": f"Newsletter updated but failed to send: {error}"})
+            
+            return jsonify({"type": "success", "message": "Newsletter updated successfully."})
+            
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"type": "error", "message": str(e)})
+    
+    elif request.method == "DELETE":
+        try:
+            db.session.delete(newsletter)
+            db.session.commit()
+            return jsonify({"type": "success", "message": "Newsletter deleted successfully."})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/admin/custom-newsletter/<int:newsletter_id>/send", methods=["POST"])
+@login_required
+def send_custom_newsletter(newsletter_id):
+    """Send a custom newsletter immediately"""
+    try:
+        newsletter = db.session.get(Newsletter, newsletter_id)
+        if not newsletter:
+            return jsonify({"type": "error", "message": "Newsletter not found"}), 404
+        
+        success, error = send_newsletter_from_custom(newsletter)
+        
+        if success:
+            newsletter.status = "sent"
+            newsletter.sent_at = datetime.now()
+            db.session.commit()
+            return jsonify({"type": "success", "message": "Newsletter sent successfully."})
+        else:
+            newsletter.error_message = error
+            db.session.commit()
+            return jsonify({"type": "error", "message": f"Failed to send newsletter: {error}"})
+            
+    except Exception as e:
+        return jsonify({"type": "error", "message": str(e)})
+
+
+@main.route("/send-custom-newsletter/<int:newsletter_id>")
+def send_custom_newsletter_unauthenticated(newsletter_id):
+    """Unauthenticated endpoint for cron jobs to send scheduled newsletters"""
+    try:
+        newsletter = db.session.get(Newsletter, newsletter_id)
+        if not newsletter:
+            return jsonify({"type": "error", "message": "Newsletter not found"}), 404
+        
+        if newsletter.status != "scheduled":
+            return jsonify({"type": "error", "message": "Newsletter is not scheduled"}), 400
+        
+        success, error = send_newsletter_from_custom(newsletter)
+        
+        if success:
+            newsletter.status = "sent"
+            newsletter.sent_at = datetime.now()
+            db.session.commit()
+            return jsonify({"type": "success", "message": "Newsletter sent successfully."})
+        else:
+            newsletter.error_message = error
+            db.session.commit()
+            return jsonify({"type": "error", "message": f"Failed to send newsletter: {error}"})
+            
+    except Exception as e:
+        return jsonify({"type": "error", "message": str(e)})
+
+
+def send_newsletter_from_custom(newsletter):
+    """Send a custom newsletter with selected posts"""
+    try:
+        # Get settings
+        settings = {s.key: s.value for s in Settings.query.all()}
+        
+        # Get selected posts
+        selected_posts = json.loads(newsletter.selected_posts) if newsletter.selected_posts else []
+        
+        if not selected_posts:
+            return False, "No posts selected for newsletter"
+        
+        # Fetch WordPress posts
+        wp_url = settings.get("wp_site_url", "").rstrip("/")
+        wp_user = settings.get("wp_username", "")
+        wp_app_password = settings.get("wp_app_password", "")
+        
+        if not (wp_url and wp_user and wp_app_password):
+            return False, "WordPress credentials not configured"
+        
+        # Get posts from WordPress REST API
+        api_url = f"{wp_url}/wp-json/wp/v2/posts"
+        
+        # Build email content
+        email_starting = newsletter.email_starting or settings.get("email_starting", "<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>")
+        email_ending = newsletter.email_ending or settings.get("email_ending", "<p><em>Thank you for subscribing to our newsletter!</em></p>")
+        
+        post_html = ""
+        
+        for post_id in selected_posts:
+            try:
+                response = requests.get(
+                    f"{api_url}/{post_id}",
+                    auth=HTTPBasicAuth(wp_user, wp_app_password),
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    post = response.json()
+                    title = post.get("title", {}).get("rendered", "Untitled")
+                    content = post.get("excerpt", {}).get("rendered", "") or post.get("content", {}).get("rendered", "")
+                    post_url = post.get("link", "#")
+                    
+                    # Clean HTML content
+                    soup = BeautifulSoup(content, "html.parser")
+                    clean_content = soup.get_text()
+                    clean_content = clean_content[:200] + "..." if len(clean_content) > 200 else clean_content
+                    
+                    post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
+                    
+            except Exception as e:
+                log_error(f"Error fetching post {post_id}: {str(e)}")
+                continue
+        
+        if not post_html:
+            return False, "No valid posts found"
+        
+        email_body = email_starting + post_html + email_ending
+        
+        # Send to subscribers
+        active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
+        if not active_emails:
+            return False, "No active subscribers found"
+        
+        # SMTP settings
+        smtp_server = settings.get("SMTP_SERVER")
+        smtp_port = settings.get("SMTP_PORT")
+        smtp_username = settings.get("SMTP_USERNAME")
+        smtp_password = settings.get("SMTP_PASSWORD")
+        
+        if not all([smtp_server, smtp_port, smtp_username, smtp_password]):
+            return False, "SMTP settings incomplete"
+        
+        success_count = 0
+        failed_count = 0
+        
+        for email_entry in active_emails:
+            try:
+                message = MIMEMultipart()
+                message["From"] = smtp_username
+                message["To"] = email_entry.email
+                message["Subject"] = newsletter.subject
+                message.attach(MIMEText(email_body, "html"))
+                
+                with smtplib.SMTP_SSL(smtp_server, int(smtp_port)) as server:
+                    server.login(smtp_username, smtp_password)
+                    server.sendmail(smtp_username, email_entry.email, message.as_string())
+                
+                success_count += 1
+                
+            except Exception as e:
+                log_error(f"Error sending to {email_entry.email}: {str(e)}")
+                failed_count += 1
+        
+        newsletter.sent_count = success_count
+        newsletter.failed_count = failed_count
+        
+        return True, f"Sent to {success_count} subscribers, failed for {failed_count}"
+        
+    except Exception as e:
+        return False, str(e)
 
 
 @main.route("/fetch-wordpress-posts")
@@ -471,13 +784,9 @@ def fetch_wordpress_posts():
 def send_newsletter():
     # Check if we should use WordPress posts or local posts
     use_wordpress = request.args.get("source", "local") == "wordpress"
-    email_starting = Settings.query.filter_by(key="email_starting").first().value
-    email_ending = Settings.query.filter_by(key="email_ending").first().value
-    welcome = (
-        email_starting
-        if email_starting
-        else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
-    )
+    welcome = Settings.query.filter_by(key="email_starting").first().value if Settings.query.filter_by(key="email_starting").first() else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+    email_ending = Settings.query.filter_by(key="email_ending").first().value if Settings.query.filter_by(key="email_ending").first() else "<p><em>Thank you for subscribing to our newsletter!</em></p>"
+    
 
     if use_wordpress:
         # Get WordPress posts
@@ -2242,6 +2551,72 @@ def publish_scheduled_social_posts():
 
     except Exception as e:
         log_error(f"Social posts scheduler error: {str(e)}")
+
+
+@main.route("/publish-scheduled-newsletters", methods=["GET"])
+def publish_scheduled_newsletters():
+    """Publish scheduled newsletters - unauthenticated endpoint for cron jobs"""
+    try:
+        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        
+        # Find scheduled newsletters that are due
+        newsletters = Newsletter.query.filter(
+            Newsletter.status == "scheduled",
+            Newsletter.scheduled_at != None,
+            Newsletter.scheduled_at <= now,
+        ).all()
+        
+        results = []
+        
+        for newsletter in newsletters:
+            try:
+                success, error = send_newsletter_from_custom(newsletter)
+                
+                if success:
+                    newsletter.status = "sent"
+                    newsletter.sent_at = datetime.now()
+                    db.session.commit()
+                    results.append({
+                        "newsletter_id": newsletter.id,
+                        "title": newsletter.title,
+                        "status": "sent",
+                        "message": "Newsletter sent successfully"
+                    })
+                    log_error(f"Successfully sent scheduled newsletter ID {newsletter.id}: {newsletter.title}")
+                else:
+                    newsletter.error_message = error
+                    db.session.commit()
+                    results.append({
+                        "newsletter_id": newsletter.id,
+                        "title": newsletter.title,
+                        "status": "failed",
+                        "message": f"Failed to send newsletter: {error}"
+                    })
+                    log_error(f"Failed to send scheduled newsletter ID {newsletter.id}: {error}")
+                    
+            except Exception as e:
+                newsletter.error_message = str(e)
+                db.session.commit()
+                results.append({
+                    "newsletter_id": newsletter.id,
+                    "title": newsletter.title,
+                    "status": "error",
+                    "message": f"Exception: {str(e)}"
+                })
+                log_error(f"Exception processing scheduled newsletter ID {newsletter.id}: {str(e)}")
+        
+        return jsonify({
+            "type": "success",
+            "processed_count": len(newsletters),
+            "results": results
+        })
+        
+    except Exception as e:
+        log_error(f"Newsletter scheduler error: {str(e)}")
+        return jsonify({
+            "type": "error",
+            "message": f"Newsletter scheduler error: {str(e)}"
+        }), 500
 
 @main.route("/upload-image", methods=["POST"])
 def upload_image():
