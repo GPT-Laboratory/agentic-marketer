@@ -1,0 +1,425 @@
+{% extends "admin/base.html" %}
+
+{% block extra_css %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="h3 mb-4 text-gray-800">Social Posts</h1>
+    <div class="d-flex justify-content-between">
+        <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#socialPostModal"
+            onclick="openSocialPostModal()">
+            <i class="fas fa-plus"></i> New Social Post
+        </button>
+        <button class="btn btn-warning mb-3" data-bs-toggle="modal" data-bs-target="#aiblogModal"
+            onclick="openAIBlogModal()">
+            <i class="fas fa-plus"></i> New AI Blog Post
+        </button>
+        <!-- <div>
+            <button class="btn btn-info mb-3 me-2" onclick="testLinkedIn()">
+                <i class="fab fa-linkedin"></i> Test LinkedIn
+            </button>
+            <button class="btn btn-info mb-3 me-2" onclick="testTwitter()">
+                <i class="fab fa-twitter"></i> Test Twitter
+            </button>
+            <button class="btn btn-warning mb-3" onclick="testSocialScheduler()">
+                <i class="fas fa-clock"></i> Test Scheduler
+            </button>
+        </div> -->
+    </div>
+    <div class="card shadow mb-4">
+        <div class="card-body">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Content</th>
+                        <th>Status</th>
+                        <th>Scheduled At</th>
+                        <th>LinkedIn</th>
+                        <!-- <th>Twitter</th> -->
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for post in social_posts %}
+                    <tr>
+                        <td>{{ post.content[:50] }}...</td>
+                        <td>{{ post.status }}</td>
+                        <td>{{ post.scheduled_at or '' }}</td>
+                        <td>
+                            {% if post.posted_to_linkedin %}
+                            <span class="badge bg-success">Published</span>
+                            {% elif post.post_to_linkedin %}
+                            <span class="badge bg-warning">Pending</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <!-- <td>
+                            {% if post.posted_to_x %}
+                                <span class="badge bg-success">Published</span>
+                            {% elif post.post_to_x %}
+                                <span class="badge bg-warning">Pending</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td> -->
+                        <td>
+                            {% if not post.posted_to_linkedin %} <button class="btn btn-sm btn-info"
+                                onclick="editSocialPost({{ post.id }})">
+                                <i class="fas fa-pencil-alt"></i>
+                            </button>{% endif %}
+                            <form action="{{ url_for('main.delete_social_post', social_post_id=post.id) }}"
+                                method="POST" class="d-inline" onsubmit="return confirm('Delete this social post?');">
+                                <button type="submit" class="btn btn-danger btn-sm">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Social Post Modal -->
+<div class="modal fade" id="socialPostModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="socialPostModalLabel">New Social Post</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="socialPostForm" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-control" id="socialPostTitle" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Content</label>
+                        <textarea class="form-control" id="socialPostContent" name="content" rows="6"
+                            placeholder="Write your social media post content here..."></textarea>
+                        <small class="form-text text-muted">
+                            <span id="charCount">0</span> characters (Twitter limit: 280, LinkedIn: 3000)
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Image (optional)</label>
+                        <input type="file" class="form-control" id="socialPostImage" name="image" accept="image/*">
+                        <small class="form-text text-muted">Supported formats: JPG, PNG, GIF. Max size: 5MB</small>
+                    </div>
+
+                    <div class="mb-3 img-preview-div" style="display: none;">
+                        <img id="socialPostImagePreview" src="" alt="Preview Image"
+                            style="max-width: 100px; height: auto;" class="rounded shadow-sm mt-2">
+                    </div>
+
+
+                    <div class="mb-3">
+                        <label class="form-label">Schedule (optional)</label>
+                        <input type="text" class="form-control" id="scheduledAt" name="scheduled_at"
+                            placeholder="YYYY-MM-DD HH:mm">
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="postToLinkedIn"
+                                    name="post_to_linkedin">
+                                <label class="form-check-label" for="postToLinkedIn">
+                                    <i class="fab fa-linkedin text-primary"></i> Post to LinkedIn
+                                </label>
+                            </div>
+                        </div>
+                        <!-- <div class="col-md-6">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="postToTwitter" name="post_to_twitter">
+                                <label class="form-check-label" for="postToTwitter">
+                                    <i class="fab fa-twitter text-info"></i> Post to Twitter
+                                </label>
+                            </div>
+                        </div> -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<!-- AI Blog Modal -->
+<div class="modal fade" id="aiblogModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="aiblogModalLabel">New Blog Post</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="aiblogForm" method="POST">
+                <div class="modal-body">
+                    <!-- drowdown for selecting text/link -->
+                    <div class="mb-3">
+                        <label for="selectTextLink" class="form-label">Select Content Type</label>
+                        <select class="form-control" id="selectTextLink" name="selectTextLink">
+                            <option value="text">Text</option>
+                            <option value="link">Link</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3" id="textContainer">
+                        <label for="ai_text_topic" class="form-label">Enter Text Topic <span
+                                class="text-danger">*</span></label>
+                        <textarea class="form-control" id="ai_text_topic" name="ai_text_topic" rows="6"
+                            placeholder="Enter your topic text..."></textarea>
+                    </div>
+
+                    <div class="mb-3 d-none" id="linkContainer">
+                        <label for="ai_link_topic" class="form-label">Enter Link Topic <span
+                                class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="ai_link_topic" name="ai_link_topic"
+                            placeholder="Enter your link here...">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Schedule (optional)</label>
+                        <input type="text" class="form-control" id="aiScheduledAt" name="scheduled_at"
+                            placeholder="YYYY-MM-DD HH:mm">
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="postaitolinkedin" name="post_to_linkedin">
+                        <label class="form-check-label" for="postaitolinkedin">Publish to Linkedin</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script>
+    document.getElementById("selectTextLink").addEventListener("change", function () {
+        const value = this.value;
+        const textContainer = document.getElementById("textContainer");
+        const linkContainer = document.getElementById("linkContainer");
+
+        if (value === "text") {
+            textContainer.classList.remove("d-none");
+            linkContainer.classList.add("d-none");
+        } else if (value === "link") {
+            linkContainer.classList.remove("d-none");
+            textContainer.classList.add("d-none");
+        }
+    });
+
+    function openAIBlogModal() {
+        document.getElementById('aiblogForm').reset();
+        document.getElementById('aiblogModalLabel').innerText = 'New AI Social Post';
+        // document.getElementById('scheduledAt').value = '';
+        document.getElementById('postaitolinkedin').checked = false;
+        document.getElementById('aiblogForm').action = '/admin/ai-social-posts/add';
+    }
+    
+    function openSocialPostModal() {
+        document.getElementById('socialPostForm').reset();
+        document.getElementById('socialPostModalLabel').innerText = 'New Social Post';
+        document.getElementById('socialPostContent').value = '';
+        document.getElementById('charCount').textContent = '0';
+        document.getElementById('scheduledAt').value = '';
+        document.getElementById('postToLinkedIn').checked = false;
+        // document.getElementById('postToTwitter').checked = false;
+        document.getElementById('socialPostForm').action = '/admin/social-posts/add';
+    }
+
+    function editSocialPost(id) {
+        fetch(`/api/social-post/${id}`)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('socialPostTitle').value = data.title;
+                document.getElementById('socialPostContent').value = data.content;
+                document.getElementById('charCount').textContent = data.content.length;
+                document.getElementById('scheduledAt').value = data.scheduled_at || '';
+                document.getElementById('postToLinkedIn').checked = data.post_to_linkedin;
+                // document.getElementById('postToTwitter').checked = data.post_to_twitter;
+                document.getElementById('socialPostModalLabel').innerText = 'Edit Social Post';
+                document.getElementById('socialPostForm').action = `/api/social-post/${id}`;
+                if (data.image_path) {
+
+                    document.getElementById('socialPostImagePreview').src = data.image_path;
+                    document.getElementsByClassName('img-preview-div')[0].style.display = 'block';
+                }
+                new bootstrap.Modal(document.getElementById('socialPostModal')).show();
+            });
+    }
+
+    // Character counter for content
+    document.getElementById('socialPostContent').addEventListener('input', function () {
+        const charCount = this.value.length;
+        document.getElementById('charCount').textContent = charCount;
+
+        // Change color based on limits
+        const charCountElement = document.getElementById('charCount');
+        if (charCount > 280) {
+            charCountElement.style.color = 'red';
+        } else if (charCount > 250) {
+            charCountElement.style.color = 'orange';
+        } else {
+            charCountElement.style.color = 'inherit';
+        }
+    });
+
+    // Initialize flatpickr for scheduling
+    flatpickr('#scheduledAt', { enableTime: true, dateFormat: 'Y-m-d H:i' });
+
+    document.getElementById('socialPostForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const content = document.getElementById('socialPostContent').value;
+
+        if (!content.trim()) {
+            toastr.error('Content is required.');
+            return;
+        }
+
+        // Add scheduled_at to form data
+        const scheduledAt = document.getElementById('scheduledAt').value;
+        if (scheduledAt) {
+            formData.set('scheduled_at', scheduledAt);
+        }
+
+        fetch(this.action, {
+            method: this.action.includes('/add') ? 'POST' : 'PUT',
+            body: formData
+        }).then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                toastr.error(error.message);
+            });
+    });
+    // ai blog form submit
+    document.getElementById('aiblogForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+
+        // Validate required fields
+        const selectTextLink = formData.get('selectTextLink');
+        const ai_text_topic = formData.get('ai_text_topic');
+        const ai_link_topic = formData.get('ai_link_topic');
+
+        if (selectTextLink === 'text' && (!ai_text_topic || !ai_text_topic.trim())) {
+            toastr.error('Please enter a topic for AI generation');
+            return;
+        }
+
+        if (selectTextLink === 'link' && (!ai_link_topic || !ai_link_topic.trim())) {
+            toastr.error('Please enter a valid link');
+            return;
+        }
+
+        // Add scheduled_at to form data
+        const aiScheduledAt = document.getElementById('aiScheduledAt').value;
+        if (aiScheduledAt) {
+            formData.set('scheduled_at', aiScheduledAt);
+        }
+
+        // Show loading state
+        const submitButton = this.querySelector('button[type="submit"]');
+        const originalButtonText = submitButton.innerHTML;
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+
+        fetch(this.action, {
+            method: 'POST',
+            body: formData
+        }).then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('aiblogModal'));
+                    modal.hide();
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                toastr.error('An error occurred while generating the AI blog post');
+            })
+            .finally(() => {
+                submitButton.disabled = false;
+                submitButton.innerHTML = originalButtonText;
+            });
+    });
+    // Test functions
+    function testLinkedIn() {
+        if (confirm('This will create a test post to LinkedIn. Continue?')) {
+            fetch('/test-linkedin-posting')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.type === 'success') {
+                        toastr.success(data.message);
+                    } else {
+                        toastr.error(data.message);
+                    }
+                })
+                .catch(error => {
+                    toastr.error('Test failed: ' + error.message);
+                });
+        }
+    }
+
+    function testTwitter() {
+        if (confirm('This will create a test post to Twitter. Continue?')) {
+            fetch('/test-twitter-posting')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.type === 'success') {
+                        toastr.success(data.message);
+                    } else {
+                        toastr.error(data.message);
+                    }
+                })
+                .catch(error => {
+                    toastr.error('Test failed: ' + error.message);
+                });
+        }
+    }
+
+    function testSocialScheduler() {
+        if (confirm('This will test the social posts scheduler. Continue?')) {
+            fetch('/test-social-scheduler')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.type === 'success') {
+                        toastr.success(data.message);
+                    } else {
+                        toastr.error(data.message);
+                    }
+                })
+                .catch(error => {
+                    toastr.error('Test failed: ' + error.message);
+                });
+        }
+    }
+</script>
+{% endblock %}

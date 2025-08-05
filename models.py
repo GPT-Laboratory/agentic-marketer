@@ -46,6 +46,9 @@ class Blog(db.Model):
     scheduled_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(50), default='draft')  # draft, scheduled, published
     image_path = db.Column(db.String(255), nullable=True)
+    
+    # Content type: 'blog' for WordPress posts, 'social' for social media posts
+    content_type = db.Column(db.String(20), default='blog')  # 'blog' or 'social'
 
     # Platform flags
     post_to_wordpress = db.Column(db.Boolean, default=False)
@@ -66,6 +69,8 @@ class Blog(db.Model):
     wp_error = db.Column(db.Text, nullable=True)
     linkedin_error = db.Column(db.Text, nullable=True)
     x_error = db.Column(db.Text, nullable=True)
+
+
 
 class LinkedInPost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -95,6 +100,30 @@ class NewsletterEmail(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Newsletter(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=True)  # Custom content if needed
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), default='draft')  # draft, scheduled, sent
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Selected posts (stored as JSON array of post IDs)
+    selected_posts = db.Column(db.Text, nullable=True)  # JSON array of WordPress post IDs
+    
+    # Newsletter settings
+    email_starting = db.Column(db.Text, nullable=True)
+    email_ending = db.Column(db.Text, nullable=True)
+    
+    # Error tracking
+    error_message = db.Column(db.Text, nullable=True)
+    sent_count = db.Column(db.Integer, default=0)
+    failed_count = db.Column(db.Integer, default=0)
 
 
 # Settings model to store site-wide configurable text fields
