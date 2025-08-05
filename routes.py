@@ -1117,6 +1117,8 @@ def admin_add_ai_blog():
                 )
 
             ai_blog = generate_ai_blog(ai_text_topic)
+            # log_error(f"AI blog generation for topic: {ai_text_topic}")
+            
             title = ai_blog.get("headline", "AI Generated Blog Post")
             content = ai_blog.get("content", ai_text_topic)
         else:
@@ -1278,8 +1280,9 @@ def api_social_post(social_post_id):
                     else ""
                 ),
                 "post_to_linkedin": social_post.post_to_linkedin,
-                "post_to_twitter": social_post.post_to_x,
-                "image_path": url_for('static', filename=social_post.image_path),
+                # "post_to_twitter": social_post.post_to_x,
+                
+                "image_path": url_for('static', filename=social_post.image_path) if social_post.image_path else None,
                 # previewable image path
                 
             }
@@ -1360,6 +1363,105 @@ def delete_social_post(social_post_id):
         flash("Error deleting social post.", "error")
         return redirect(url_for("main.admin_social_posts"))
 
+@main.route("/admin/ai-social-posts/add", methods=["POST"])
+@login_required
+def admin_add_ai_social_post():
+    try:
+        selectTextLink = request.form.get("selectTextLink")
+        ai_text_topic = request.form.get("ai_text_topic")
+        ai_link_topic = request.form.get("ai_link_topic")
+        scheduled_at_str = request.form.get("scheduled_at")
+        post_to_linkedin_flag = bool(request.form.get("post_to_linkedin"))
+
+        # Parse scheduled_at datetime
+        scheduled_at = None
+        if scheduled_at_str and scheduled_at_str.strip():
+            try:
+                scheduled_at = datetime.strptime(
+                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
+                )
+            except ValueError:
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
+                    }
+                )
+
+        status = "published" if not scheduled_at else "scheduled"
+
+        if selectTextLink == "text":
+            if not ai_text_topic or not ai_text_topic.strip():
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Please enter a topic for AI generation",
+                    }
+                )
+
+            ai_blog = generate_ai_social_post(ai_text_topic)
+            title = ai_blog.get("headline", "AI Generated Blog Post")
+            content = ai_blog.get("content", ai_text_topic)
+        else:
+            if not ai_link_topic or not ai_link_topic.strip():
+                return jsonify(
+                    {"type": "error", "message": "Please enter a valid link"}
+                )
+
+            # check if ai_link_topic is a valid url
+            if not is_url(ai_link_topic):
+                return jsonify({"type": "error", "message": "Invalid link format"})
+
+            # check if ai_link_topic is youtube link or blog link
+            if "youtube.com" in ai_link_topic or "youtu.be" in ai_link_topic:
+                extracted_text = extract_youtube_text(ai_link_topic)
+            else:
+                extracted_text = extract_webpage_text(ai_link_topic)
+
+            if not extracted_text:
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": "Could not extract content from the provided link",
+                    }
+                )
+
+            ai_blog = generate_ai_social_post(extracted_text)
+            print(ai_blog)
+            # print type of ai blog
+            print(type(ai_blog))
+            
+            # title = ai_blog.get("headline", "AI Generated Post")
+            # content = ai_blog.get("content", extracted_text)
+            title=content.get("headline", "AI Generated Post")
+            content=content.get("content", extracted_text)
+
+        blog = Blog(
+            title=title,
+            content=content,
+            user_id=current_user.id,
+            scheduled_at=scheduled_at,
+            status=status,
+            post_to_linkedin=post_to_linkedin_flag,
+            content_type='social',
+        )
+        db.session.add(blog)
+        db.session.commit()
+
+        # Publish now if needed
+        if status == "published" and post_to_linkedin_flag:
+            settings = {s.key: s.value for s in Settings.query.all()}
+            post_to_linkedin(blog, settings)
+
+        return jsonify(
+            {"type": "success", "message": "AI social post created successfully."}
+        )
+    except Exception as e:
+        db.session.rollback()
+        log_error(f"Error creating AI social post: {str(e)}")
+        return jsonify(
+            {"type": "error", "message": f"Error creating social post: {str(e)}"}
+        )
 
 def generate_ai_blog(content):
     openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
@@ -1381,7 +1483,7 @@ def generate_ai_blog(content):
             {
                 "role": "system",
                 "content": (
-                    "You are an expert blog writer. Your job is to generate clear, SEO-friendly blog posts.\n"
+                    "You are an expert blog writer. Use the term 'we' not 'I'. Your job is to generate clear, SEO-friendly blog posts.\n"
                     "Always return your response as a JSON object with the following structure:\n"
                     '{ "headline": "...", "content": "..." }\n'
                     "The 'headline' should be catchy and relevant to the topic.\n"
@@ -1431,23 +1533,78 @@ def generate_ai_blog(content):
 
         return {"headline": headline, "content": content}
 
+def generate_ai_social_post(content):
+    openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
+    linkedin_char_limit = db.session.query(Settings).filter_by(key="linkedin_char_limit").first() or 800
+    if not openai_key or not openai_key.value:
+        raise Exception("OpenAI API key not configured")
 
-@main.route("/test-scheduler")
-@login_required
-def test_scheduler():
-    """Test the scheduler manually"""
-    try:
-        from app import publish_scheduled_blogs
+    client = OpenAI(api_key=openai_key.value)
 
-        publish_scheduled_blogs()
-        return jsonify(
+    response = client.chat.completions.create(
+        model="gpt-4",
+        # messages=[
+        #     {
+        #         "role": "system",
+        #         "content": "You are a professional blog writer. Generate engaging blog content with a catchy headline and well-structured content.",
+        #     },
+        #     {"role": "user", "content": f"Topic: {content} \n\n Generate a blog post in JSON format with 'headline' and 'content' keys. The content should be in HTML format with proper paragraphs and formatting."},
+        # ],
+        messages=[
             {
-                "type": "success",
-                "message": "Scheduler test completed. Check logs for details.",
-            }
-        )
-    except Exception as e:
-        return jsonify({"type": "error", "message": f"Scheduler test failed: {str(e)}"})
+                "role": "system",
+                "content": (
+                    "You are an expert linkedin post writer. Use the term 'we' not 'I'. Your job is to generate clear, SEO-friendly social posts.\n"
+                    "Always return your response as a JSON object with the following structure:\n"
+                    '{ "headline": "...", "content": "..." }\n'
+                    "The 'headline' should be catchy and relevant to the topic.\n"
+                    "The 'content' must be well-structured linkedin post with proper hashtags and formatting. "
+                    "Avoid markdown. Do not wrap the response in code blocks. Do not include explanation or commentary."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Topic: {content}\n\n"
+                    "Please write a linkedin post of {linkedin_char_limit.value} characters in the format mentioned above. Make sure the output is a valid JSON string."
+                ),
+            },
+        ],
+        temperature=0.8,
+        max_tokens=2000,
+    )
+
+    raw = response.choices[0].message.content
+    try:
+        # Try to parse as JSON
+        parsed = json.loads(raw)
+        return parsed
+    except json.JSONDecodeError:
+        # If JSON parsing fails, try to extract headline and content from the response
+        lines = raw.split("\n")
+        headline = ""
+        content = ""
+        in_content = False
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith('"headline"') or line.startswith("'headline'"):
+                headline = line.split(":", 1)[1].strip().strip("\",'")
+            elif line.startswith('"content"') or line.startswith("'content'"):
+                in_content = True
+                content_part = line.split(":", 1)[1].strip().strip("\",'")
+                content += content_part
+            elif in_content and line:
+                content += line
+
+        if not headline or not content:
+            # Fallback: use the raw response as content
+            headline = "AI Generated Social Post"
+            content = raw
+
+        return {"headline": headline, "content": content}
+
+
 
 
 @main.route("/test-social-scheduler")
@@ -2086,7 +2243,6 @@ def publish_scheduled_social_posts():
     except Exception as e:
         log_error(f"Social posts scheduler error: {str(e)}")
 
-
 @main.route("/upload-image", methods=["POST"])
 def upload_image():
     # Use 'file' instead of 'upload'
@@ -2157,12 +2313,13 @@ def post_to_linkedin(blog, settings):
         api_url = "https://api.linkedin.com/v2/ugcPosts"
 
         # Prepare the post data
+        blog_description= extract_clean_text(blog.content)
         post_data = {
             "author": f"urn:li:organization:{org_id}",
             "lifecycleState": "PUBLISHED",
             "specificContent": {
                 "com.linkedin.ugc.ShareContent": {
-                    "shareCommentary": {"text": blog.content},
+                    "shareCommentary": {"text": blog_description},
                     "shareMediaCategory": "NONE",
                 }
             },
@@ -2225,7 +2382,7 @@ def post_to_linkedin(blog, settings):
                     "lifecycleState": "PUBLISHED",
                     "specificContent": {
                         "com.linkedin.ugc.ShareContent": {
-                            "shareCommentary": {"text": blog.content},
+                            "shareCommentary": {"text": blog.title + "\n" + blog.content},
                             "shareMediaCategory": "IMAGE",
                             "media": [{"status": "READY", "media": image_urn}],
                         }
@@ -2246,7 +2403,7 @@ def post_to_linkedin(blog, settings):
                 "lifecycleState": "PUBLISHED",
                 "specificContent": {
                     "com.linkedin.ugc.ShareContent": {
-                        "shareCommentary": {"text": blog.content},
+                        "shareCommentary": {"text": blog_description},
                         "shareMediaCategory": "NONE",
                     }
                 },
@@ -2274,3 +2431,25 @@ def post_to_linkedin(blog, settings):
         log_error(f"Exception posting to LinkedIn for Blog ID {blog.id}: {str(e)}")
         return False, str(e)
 
+def extract_clean_text(blob):
+    """Parses and flattens JSON-like text, or returns cleaned string."""
+    if isinstance(blob, dict):
+        return ' '.join(str(v) for v in blob.values())
+
+    if isinstance(blob, str):
+        try:
+            # Try to parse JSON string
+            parsed = json.loads(blob)
+            if isinstance(parsed, dict):
+                return ' '.join(str(v) for v in parsed.values())
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback regex-based cleanup
+        blob = re.sub(r'[{}"]+', '', blob)             # remove {, }, "
+        blob = re.sub(r'\b\w+\s*:\s*', '', blob)        # remove keys like headline:
+        # blob = re.sub(r'\s+', ' ', blob).strip()        # collapse spaces
+        return blob
+
+    return str(blob).strip()
+    
