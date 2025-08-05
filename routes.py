@@ -180,7 +180,7 @@ def admin_logout():
 @main.route("/admin")
 @login_required
 def admin_dashboard():
-
+    current_time = datetime.now()
     users = User.query.all()
     faqs = FAQ.query.all()
     newsletters = Newsletter.query.all()
@@ -191,6 +191,7 @@ def admin_dashboard():
         faqs=faqs,
         newsletters=newsletters,
         settings=settings,
+        current_time=current_time,
     )
 
 
