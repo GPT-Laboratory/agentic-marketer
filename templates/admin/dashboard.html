@@ -89,7 +89,157 @@
             </div>
         </div>
 
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-info shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                Custom Newsletters</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ newsletters|length }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-envelope fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                Scheduled Items</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                {{ newsletters|selectattr('status', 'equalto', 'scheduled')|list|length }}
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-clock fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <!-- Cron Job URLs Section -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">
+                <i class="fas fa-link"></i> Cron Job URLs
+            </h6>
+            <small class="text-muted">Use these URLs in your cron jobs to automate publishing and newsletter sending</small>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <!-- Blog Publishing -->
+                <div class="col-lg-6 mb-3">
+                    <div class="card border-left-primary">
+                        <div class="card-body">
+                            <h6 class="card-title text-primary">
+                                <i class="fas fa-blog"></i> Blog Publishing
+                            </h6>
+                            <p class="card-text small text-muted">Publishes scheduled blogs to WordPress</p>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="blogCronUrl" 
+                                       value="{{ request.host_url.rstrip('/') }}/publish-scheduled-blogs" readonly>
+                                <button class="btn btn-outline-primary" type="button" onclick="copyToClipboard('blogCronUrl')">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </div>
+                            <!-- <small class="text-muted">Example: <code>0 */2 * * * curl "URL"</code> (every 2 hours)</small> -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Social Posts Publishing -->
+                <div class="col-lg-6 mb-3">
+                    <div class="card border-left-success">
+                        <div class="card-body">
+                            <h6 class="card-title text-success">
+                                <i class="fas fa-share-alt"></i> Social Posts Publishing
+                            </h6>
+                            <p class="card-text small text-muted">Publishes scheduled social posts to LinkedIn/Twitter</p>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="socialCronUrl" 
+                                       value="{{ request.host_url.rstrip('/') }}/publish-scheduled-social-posts" readonly>
+                                <button class="btn btn-outline-success" type="button" onclick="copyToClipboard('socialCronUrl')">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </div>
+                            <!-- <small class="text-muted">Example: <code>0 */2 * * * curl "URL"</code> (every 2 hours)</small> -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Newsletter Publishing -->
+                <div class="col-lg-6 mb-3">
+                    <div class="card border-left-info">
+                        <div class="card-body">
+                            <h6 class="card-title text-info">
+                                <i class="fas fa-envelope"></i> Newsletter Publishing
+                            </h6>
+                            <p class="card-text small text-muted">Sends scheduled custom newsletters</p>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="newsletterCronUrl" 
+                                       value="{{ request.host_url.rstrip('/') }}/publish-scheduled-newsletters" readonly>
+                                <button class="btn btn-outline-info" type="button" onclick="copyToClipboard('newsletterCronUrl')">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </div>
+                            <!-- <small class="text-muted">Example: <code>0 9 * * * curl "URL"</code> (daily at 9 AM)</small> -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Monthly WordPress Newsletter -->
+                <div class="col-lg-6 mb-3">
+                    <div class="card border-left-warning">
+                        <div class="card-body">
+                            <h6 class="card-title text-warning">
+                                <i class="fas fa-calendar-alt"></i> Monthly WordPress Newsletter
+                            </h6>
+                            <p class="card-text small text-muted">Sends monthly newsletter with WordPress posts</p>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="monthlyNewsletterCronUrl" 
+                                       value="{{ request.host_url.rstrip('/') }}/send-wordpress-newsletter" readonly>
+                                <button class="btn btn-outline-warning" type="button" onclick="copyToClipboard('monthlyNewsletterCronUrl')">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </div>
+                            <!-- <small class="text-muted">Example: <code>0 9 28 * * curl "URL"</code> (28th of each month at 9 AM)</small> -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- All-in-One Scheduler -->
+            <!-- <div class="row mt-3">
+                <div class="col-12">
+                    <div class="card border-left-dark">
+                        <div class="card-body">
+                            <h6 class="card-title text-dark">
+                                <i class="fas fa-cogs"></i> All-in-One Scheduler
+                            </h6>
+                            <p class="card-text small text-muted">Runs all scheduled tasks (blogs, social posts, newsletters)</p>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="allSchedulerCronUrl" 
+                                       value="{{ request.host_url.rstrip('/') }}/publish-scheduled-blogs && curl {{ request.host_url.rstrip('/') }}/publish-scheduled-social-posts && curl {{ request.host_url.rstrip('/') }}/publish-scheduled-newsletters" readonly>
+                                <button class="btn btn-outline-dark" type="button" onclick="copyToClipboard('allSchedulerCronUrl')">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </div>
+                            <!-- <small class="text-muted">Example: <code>0 */2 * * * curl "URL1" && curl "URL2" && curl "URL3"</code></small> -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div> -->
     <!-- {% if settings.get('log') %}
     <div class="alert alert-danger alert-dismissible fade show" role="alert">
         <strong>Error Log:</strong><br>
@@ -107,6 +257,24 @@
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 <script>
+// Copy to clipboard function
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    element.select();
+    element.setSelectionRange(0, 99999); // For mobile devices
+    
+    try {
+        document.execCommand('copy');
+        toastr.success('URL copied to clipboard!');
+    } catch (err) {
+        // Fallback for modern browsers
+        navigator.clipboard.writeText(element.value).then(function() {
+            toastr.success('URL copied to clipboard!');
+        }).catch(function() {
+            toastr.error('Failed to copy URL');
+        });
+    }
+}
 function testScheduler() {
     const button = event.target;
     const originalText = button.innerHTML;
