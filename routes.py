@@ -65,9 +65,11 @@ main = Blueprint("main", __name__)
 # Public routes
 @main.route("/")
 def index():
-    faqs = FAQ.query.all()
-    settings = {s.key: s.value for s in Settings.query.all()}
-    return render_template("public/index.html", faqs=faqs, settings=settings)
+    # redirect to /admin/login
+    return redirect(url_for("main.admin_login"))
+    # faqs = FAQ.query.all()
+    # settings = {s.key: s.value for s in Settings.query.all()}
+    # return render_template("public/index.html", faqs=faqs, settings=settings)
 
 
 @main.route("/about")
