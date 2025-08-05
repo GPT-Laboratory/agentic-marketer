@@ -11,7 +11,7 @@ class Config:
     SQLALCHEMY_DATABASE_URI = 'sqlite:///chatbot.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-    APP_NAME = os.getenv('APP_NAME', 'ChatBot')
+    APP_NAME = os.getenv('APP_NAME', 'GPT-Lab Newsletter')
 
     @staticmethod
     def get_default_settings() -> list:
