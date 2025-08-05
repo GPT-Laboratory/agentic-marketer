@@ -47,7 +47,8 @@
                     <tr>
                         <td>{{ post.content[:50] }}...</td>
                         <td>{{ post.status }}</td>
-                        <td>{{ post.scheduled_at or '' }}</td>
+                        <td>{{ post.local_scheduled_at.strftime('%Y-%m-%d %H:%M') if post.local_scheduled_at else '-' }}</td>
+
                         <td>
                             {% if post.posted_to_linkedin %}
                             <span class="badge bg-success">Published</span>

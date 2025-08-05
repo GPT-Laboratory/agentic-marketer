@@ -1,3 +1,4 @@
+from zoneinfo import ZoneInfo
 from flask import (
     Blueprint,
     render_template,
@@ -83,6 +84,10 @@ def contact():
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template("public/contact.html", settings=settings)
 
+def utc_naive_to_local(dt):
+    if dt:
+        return dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Helsinki"))
+    return None
 
 @main.route("/api/chat", methods=["POST"])
 def chat():
@@ -372,6 +377,9 @@ def platform_settings():
 def admin_newsletter_emails():
     emails = NewsletterEmail.query.order_by(NewsletterEmail.created_at.desc()).all()
     newsletters = Newsletter.query.order_by(Newsletter.created_at.desc()).all()
+    for newsletter in newsletters:
+        newsletter.local_scheduled_at = utc_naive_to_local(newsletter.scheduled_at)
+        
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
         "admin/newsletter_emails.html", emails=emails, newsletters=newsletters, settings=settings
@@ -443,11 +451,15 @@ def create_custom_newsletter():
         if scheduled_at_str and scheduled_at_str.strip():
             try:
                 # Handle datetime-local format (YYYY-MM-DDTHH:MM) and convert to expected format
-                date_str = scheduled_at_str.strip()
-                if 'T' in date_str:
-                    # Convert from datetime-local format to expected format
-                    date_str = date_str.replace('T', ' ')
-                scheduled_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                date_str = scheduled_at_str.strip().replace('T', ' ')
+                # 1) parse as naive local (the time user picked)
+                local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                # 2) attach Europe/Helsinki tz
+                local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                # 3) convert to UTC
+                utc_aware = local_aware.astimezone(timezone.utc)
+                # 4) store as naive UTC (matches your current model)
+                scheduled_at = utc_aware.replace(tzinfo=None)
             except ValueError:
                 return jsonify(
                     {
@@ -505,7 +517,7 @@ def manage_custom_newsletter(newsletter_id):
             "id": newsletter.id,
             "title": newsletter.title,
             "subject": newsletter.subject,
-            "scheduled_at": newsletter.scheduled_at.strftime("%Y-%m-%d %H:%M") if newsletter.scheduled_at else "",
+            "scheduled_at": utc_naive_to_local(newsletter.scheduled_at) if newsletter.scheduled_at else "",
             "selected_posts": newsletter.selected_posts,
             "email_starting": newsletter.email_starting,
             "email_ending": newsletter.email_ending,
@@ -523,12 +535,16 @@ def manage_custom_newsletter(newsletter_id):
             scheduled_at_str = request.form.get("scheduled_at")
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    # Handle datetime-local format (YYYY-MM-DDTHH:MM) and convert to expected format
-                    date_str = scheduled_at_str.strip()
-                    if 'T' in date_str:
-                        # Convert from datetime-local format to expected format
-                        date_str = date_str.replace('T', ' ')
-                    newsletter.scheduled_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    # 1) parse as naive local (the time user picked)
+                    local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                    # 2) attach Europe/Helsinki tz
+                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    # 3) convert to UTC
+                    utc_aware = local_aware.astimezone(timezone.utc)
+                    # 4) store as naive UTC (matches your current model)
+                    scheduled_at = utc_aware.replace(tzinfo=None)
+                    newsletter.scheduled_at = scheduled_at
                     newsletter.status = "scheduled"
                 except ValueError:
                     return jsonify(
@@ -1278,6 +1294,8 @@ def api_manage_faq(faq_id):
 @login_required
 def admin_blogs():
     blogs = Blog.query.filter_by(content_type='blog').order_by(Blog.created_at.desc()).all()
+    for blog in blogs:
+        blog.local_scheduled_at = utc_naive_to_local(blog.scheduled_at)
     return render_template("admin/blogs.html", blogs=blogs)
 
 
@@ -1285,6 +1303,8 @@ def admin_blogs():
 @login_required
 def admin_social_posts():
     social_posts = Blog.query.filter_by(content_type='social').order_by(Blog.created_at.desc()).all()
+    for post in social_posts:
+        post.local_scheduled_at = utc_naive_to_local(post.scheduled_at)
     return render_template("admin/social_posts.html", social_posts=social_posts)
 
 
@@ -1301,9 +1321,16 @@ def admin_add_blog():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(
-                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                )
+                date_str = scheduled_at_str.strip().replace('T', ' ')
+                # 1) parse as naive local (the time user picked)
+                local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                # 2) attach Europe/Helsinki tz
+                local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                # 3) convert to UTC
+                utc_aware = local_aware.astimezone(timezone.utc)
+                # 4) store as naive UTC (matches your current model)
+                scheduled_at = utc_aware.replace(tzinfo=None)
+
             except ValueError:
                 return jsonify(
                     {
@@ -1348,7 +1375,7 @@ def api_blog(blog_id):
                 "title": blog.title,
                 "content": blog.content,
                 "scheduled_at": (
-                    blog.scheduled_at.strftime("%Y-%m-%d %H:%M")
+                    utc_naive_to_local(blog.scheduled_at)
                     if blog.scheduled_at
                     else ""
                 ),
@@ -1365,9 +1392,16 @@ def api_blog(blog_id):
             scheduled_at = None
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    scheduled_at = datetime.strptime(
-                        scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                    )
+                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    # 1) parse as naive local (the time user picked)
+                    local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                    # 2) attach Europe/Helsinki tz
+                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    # 3) convert to UTC
+                    utc_aware = local_aware.astimezone(timezone.utc)
+                    # 4) store as naive UTC (matches your current model)
+                    scheduled_at = utc_aware.replace(tzinfo=None)
+
                 except ValueError:
                     return jsonify(
                         {
@@ -1406,9 +1440,15 @@ def admin_add_ai_blog():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(
-                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                )
+                date_str = scheduled_at_str.strip().replace('T', ' ')
+                # 1) parse as naive local (the time user picked)
+                local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                # 2) attach Europe/Helsinki tz
+                local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                # 3) convert to UTC
+                utc_aware = local_aware.astimezone(timezone.utc)
+                # 4) store as naive UTC (matches your current model)
+                scheduled_at = utc_aware.replace(tzinfo=None)
             except ValueError:
                 return jsonify(
                     {
@@ -1534,9 +1574,15 @@ def admin_add_social_post():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(
-                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                )
+                date_str = scheduled_at_str.strip().replace('T', ' ')
+                # 1) parse as naive local (the time user picked)
+                local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                # 2) attach Europe/Helsinki tz
+                local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                # 3) convert to UTC
+                utc_aware = local_aware.astimezone(timezone.utc)
+                # 4) store as naive UTC (matches your current model)
+                scheduled_at = utc_aware.replace(tzinfo=None)
             except ValueError:
                 return jsonify(
                     {
@@ -1587,7 +1633,7 @@ def api_social_post(social_post_id):
                 "title": social_post.title,
                 "content": social_post.content,
                 "scheduled_at": (
-                    social_post.scheduled_at.strftime("%Y-%m-%d %H:%M")
+                    utc_naive_to_local(social_post.scheduled_at)
                     if social_post.scheduled_at
                     else ""
                 ),
@@ -1622,9 +1668,15 @@ def api_social_post(social_post_id):
             scheduled_at = None
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    scheduled_at = datetime.strptime(
-                        scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                    )
+                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    # 1) parse as naive local (the time user picked)
+                    local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                    # 2) attach Europe/Helsinki tz
+                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    # 3) convert to UTC
+                    utc_aware = local_aware.astimezone(timezone.utc)
+                    # 4) store as naive UTC (matches your current model)
+                    scheduled_at = utc_aware.replace(tzinfo=None)
                 except ValueError:
                     return jsonify(
                         {
@@ -1689,9 +1741,15 @@ def admin_add_ai_social_post():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                scheduled_at = datetime.strptime(
-                    scheduled_at_str.strip(), "%Y-%m-%d %H:%M"
-                )
+                date_str = scheduled_at_str.strip().replace('T', ' ')
+                # 1) parse as naive local (the time user picked)
+                local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                # 2) attach Europe/Helsinki tz
+                local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                # 3) convert to UTC
+                utc_aware = local_aware.astimezone(timezone.utc)
+                # 4) store as naive UTC (matches your current model)
+                scheduled_at = utc_aware.replace(tzinfo=None)
             except ValueError:
                 return jsonify(
                     {
@@ -2020,7 +2078,7 @@ def test_twitter_posting():
 def check_scheduled_posts():
     """Check what scheduled posts exist"""
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # naive UTC
         scheduled_posts = Blog.query.filter(
             Blog.status == "scheduled", Blog.post_to_wordpress == True
         ).all()
@@ -2115,7 +2173,7 @@ def trigger_scheduled_post(blog_id):
 def debug_scheduler():
     """Debug information about the scheduler and scheduled posts"""
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # naive UTC  # Use local time instead of UTC
 
         # Get all scheduled posts
         all_scheduled = Blog.query.filter(
@@ -2173,7 +2231,7 @@ def debug_scheduler():
 def test_datetime_comparison():
     """Test datetime comparison logic"""
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # naive UTC  # Use local time instead of UTC
 
         # Get all scheduled posts
         all_scheduled = Blog.query.filter(
@@ -2475,7 +2533,7 @@ def get_last_working_day(year, month):
 @main.route("/publish-scheduled-blogs", methods=["GET"])
 def publish_scheduled_blogs():
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # naive UTC  # Use local time instead of UTC
         settings = {s.key: s.value for s in Settings.query.all()}
 
         # Find scheduled blogs that are due
@@ -2512,7 +2570,7 @@ def publish_scheduled_blogs():
 def publish_scheduled_social_posts():
     """Publish scheduled social posts to LinkedIn and Twitter"""
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # naive UTC  # Use local time instead of UTC
         settings = {s.key: s.value for s in Settings.query.all()}
 
         # Find scheduled social posts that are due
@@ -2560,7 +2618,7 @@ def publish_scheduled_social_posts():
 def publish_scheduled_newsletters():
     """Publish scheduled newsletters - unauthenticated endpoint for cron jobs"""
     try:
-        now = datetime.now().replace(tzinfo=None)  # Use local time instead of UTC
+        now = datetime.utcnow()  # Use local time instead of UTC
         
         # Find scheduled newsletters that are due
         newsletters = Newsletter.query.filter(

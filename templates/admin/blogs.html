@@ -37,7 +37,7 @@
                         <!-- title max 50 characters  -->
                         <td>{{ blog.title[:50] }}...</td>
                         <td>{{ blog.status }}</td>
-                        <td>{{ blog.scheduled_at or '' }}</td>
+                        <td>{{ blog.local_scheduled_at.strftime('%Y-%m-%d %H:%M') if blog.local_scheduled_at else '-' }}</td>
                         <td>{% if blog.posted_to_wordpress %}<span class="badge bg-success">Published</span>{% elif
                             blog.post_to_wordpress %}<span class="badge bg-warning">Pending</span>{% else %}-{% endif %}
                         </td>

@@ -81,7 +81,7 @@
                             <span class="badge bg-success">Sent</span>
                             {% endif %}
                         </td>
-                        <td>{{ newsletter.scheduled_at.strftime('%Y-%m-%d %H:%M') if newsletter.scheduled_at else '-' }}</td>
+                        <td>{{ newsletter.local_scheduled_at.strftime('%Y-%m-%d %H:%M') if newsletter.local_scheduled_at else '-' }}</td>
                         <td>{{ newsletter.sent_at.strftime('%Y-%m-%d %H:%M') if newsletter.sent_at else '-' }}</td>
                         <td>
                             {% if newsletter.status == 'draft' %}
