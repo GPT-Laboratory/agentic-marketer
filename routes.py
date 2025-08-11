@@ -1,4 +1,7 @@
+from curses import raw
 from zoneinfo import ZoneInfo
+import curses
+from types import SimpleNamespace
 from flask import (
     Blueprint,
     render_template,
@@ -11,6 +14,9 @@ from flask import (
     current_app,
     abort,
 )
+from sqlalchemy.exc import SQLAlchemyError
+import feedparser
+
 import re
 from sqlalchemy import func
 from flask_login import login_user, login_required, logout_user, current_user
@@ -27,7 +33,7 @@ from models import (
     Newsletter,
     RssUrl,
 )
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin, urlunparse
 
 from werkzeug.security import generate_password_hash
 from datetime import datetime, timezone
@@ -58,11 +64,11 @@ from app import post_to_wordpress, log_error
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
 import calendar
+import html
 
 
 # Create blueprint
 main = Blueprint("main", __name__)
-
 
 # Public routes
 @main.route("/")
@@ -444,13 +450,25 @@ def custom_newsletter():
 @login_required
 def create_custom_newsletter():
     """Create a new custom newsletter"""
+    # DEBUG (you can keep while testing)
+    raw_selected = request.form.get("selected_posts") or ""
+    print("RAW selected_posts INCOMING:", raw_selected[:200], flush=True)
+    print("RAW TYPE:", type(raw_selected), flush=True)
     try:
-        title = request.form.get("title")
-        subject = request.form.get("subject")
+        title = request.form.get("title") or ""
+        subject = request.form.get("subject") or ""
         scheduled_at_str = request.form.get("scheduled_at")
-        selected_posts = request.form.get("selected_posts")  # JSON array of post IDs
         email_starting = request.form.get("email_starting")
         email_ending = request.form.get("email_ending")
+        
+         # Parse & normalize selected_posts
+        selected_posts_list = _load_selected_posts(raw_selected)
+        if not selected_posts_list:
+            return jsonify({"type": "error", "message": "No valid posts selected"}), 400
+
+        # Serialize to a normalized JSON string for DB
+        selected_posts_json = json.dumps(selected_posts_list, ensure_ascii=False)
+
 
         # Parse scheduled_at datetime
         scheduled_at = None
@@ -479,7 +497,7 @@ def create_custom_newsletter():
         newsletter = Newsletter(
             title=title,
             subject=subject,
-            selected_posts=selected_posts,
+            selected_posts=selected_posts_json,
             scheduled_at=scheduled_at,
             status=status,
             created_by=current_user.id,
@@ -533,12 +551,16 @@ def create_custom_newsletter():
 )
 @login_required
 def manage_custom_newsletter(newsletter_id):
+    
     """Manage a specific newsletter"""
     newsletter = db.session.get(Newsletter, newsletter_id)
+    print(f"Newsletter found: {newsletter.title}")
+
     if not newsletter:
         return jsonify({"type": "error", "message": "Newsletter not found"}), 404
 
     if request.method == "GET":
+        
         return jsonify(
             {
                 "id": newsletter.id,
@@ -549,7 +571,7 @@ def manage_custom_newsletter(newsletter_id):
                     if newsletter.scheduled_at
                     else ""
                 ),
-                "selected_posts": newsletter.selected_posts,
+                "selected_posts":  newsletter.selected_posts or "[]",
                 "email_starting": newsletter.email_starting,
                 "email_ending": newsletter.email_ending,
                 "status": newsletter.status,
@@ -695,91 +717,88 @@ def send_custom_newsletter_unauthenticated(newsletter_id):
     except Exception as e:
         return jsonify({"type": "error", "message": str(e)})
 
+def _load_selected_posts(raw: str) -> list[dict]:
+    """Parse JSON array string -> list[dict] and keep only allowed fields."""
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        # keep only expected keys
+        obj = {k: item.get(k) for k in {"id", "title", "snippet", "pub_date", "link"}}
+        # basic normalization
+        obj["title"] = (obj.get("title") or "Untitled").strip()
+        obj["snippet"] = (obj.get("snippet") or "").strip()
+        obj["pub_date"] = (obj.get("pub_date") or "").strip()
+        link = (obj.get("link") or "").strip()
+        if not re.match(r"^https?://", link, flags=re.IGNORECASE):
+            link = "#"
+        obj["link"] = link
+        cleaned.append(obj)
+    return cleaned
 
 def send_newsletter_from_custom(newsletter):
-    """Send a custom newsletter with selected posts"""
+    
     try:
-        # Get settings
+        # Settings
         settings = {s.key: s.value for s in Settings.query.all()}
+        # ---- Load & clean selected posts from DB (Text column storing JSON string) ----
+        raw = newsletter.selected_posts or "[]"
+        posts_list = json.loads(raw)                      # list[dict]
+        posts = [SimpleNamespace(**p) for p in posts_list]  # dot-access
+        if posts:
+            print(posts[0].title, posts[0].link, flush=True)
 
-        # Get selected posts
-        selected_posts = (
-            json.loads(newsletter.selected_posts) if newsletter.selected_posts else []
-        )
-
-        if not selected_posts:
-            return False, "No posts selected for newsletter"
-
-        # Fetch WordPress posts
-        wp_url = settings.get("wp_site_url", "").rstrip("/")
-        wp_user = settings.get("wp_username", "")
-        wp_app_password = settings.get("wp_app_password", "")
-
-        if not (wp_url and wp_user and wp_app_password):
-            return False, "WordPress credentials not configured"
-
-        # Get posts from WordPress REST API
-        api_url = f"{wp_url}/wp-json/wp/v2/posts"
-
-        # Build email content
+        # ---- Build email body ----
         email_starting = newsletter.email_starting or settings.get(
             "email_starting",
-            "<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>",
+            "<h3>🌟 Hello from Your Team!</h3><p>Here are our selected highlights:</p><hr>",
         )
         email_ending = newsletter.email_ending or settings.get(
             "email_ending",
-            "<p><em>Thank you for subscribing to our newsletter!</em></p>",
+            "<p><em>Thank you for subscribing!</em></p>",
         )
 
         post_html = ""
+        for p in posts:
+            # Sanitize to avoid XSS
+            title = html.escape(str(p.title or "Untitled"))
+            snippet = html.escape(str(p.snippet or ""))
+            link = (p.link or "#").strip()
+            pub_date = (p.pub_date or "").strip()
 
-        for post_id in selected_posts:
-            try:
-                response = requests.get(
-                    f"{api_url}/{post_id}",
-                    auth=HTTPBasicAuth(wp_user, wp_app_password),
-                    timeout=10,
-                )
+            # Basic link validation
+            if not re.match(r"^https?://", link, flags=re.IGNORECASE):
+                link = "#"
 
-                if response.status_code == 200:
-                    post = response.json()
-                    title = post.get("title", {}).get("rendered", "Untitled")
-                    content = post.get("excerpt", {}).get("rendered", "") or post.get(
-                        "content", {}
-                    ).get("rendered", "")
-                    post_url = post.get("link", "#")
-
-                    # Clean HTML content
-                    soup = BeautifulSoup(content, "html.parser")
-                    clean_content = soup.get_text()
-                    clean_content = (
-                        clean_content[:200] + "..."
-                        if len(clean_content) > 200
-                        else clean_content
-                    )
-
-                    post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
-
-            except Exception as e:
-                log_error(f"Error fetching post {post_id}: {str(e)}")
-                continue
+            date_html = f"<br><small style='color:#6c757d;'>{html.escape(pub_date)}</small>" if pub_date else ""
+            post_html += (
+                f"<p><strong><a href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                f"{title}</a></strong><br>{snippet}{date_html}</p>"
+            )
 
         if not post_html:
             return False, "No valid posts found"
 
         email_body = email_starting + post_html + email_ending
 
-        # Send to subscribers
+        # ---- Send emails (unchanged) ----
         active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
         if not active_emails:
             return False, "No active subscribers found"
 
-        # SMTP settings
+
+        # --- SMTP ---
         smtp_server = settings.get("SMTP_SERVER")
         smtp_port = settings.get("SMTP_PORT")
         smtp_username = settings.get("SMTP_USERNAME")
         smtp_password = settings.get("SMTP_PASSWORD")
-
         if not all([smtp_server, smtp_port, smtp_username, smtp_password]):
             return False, "SMTP settings incomplete"
 
@@ -791,29 +810,76 @@ def send_newsletter_from_custom(newsletter):
                 message = MIMEMultipart()
                 message["From"] = smtp_username
                 message["To"] = email_entry.email
-                message["Subject"] = newsletter.subject
+                message["Subject"] = newsletter.subject or "Newsletter"
                 message.attach(MIMEText(email_body, "html"))
 
                 with smtplib.SMTP_SSL(smtp_server, int(smtp_port)) as server:
                     server.login(smtp_username, smtp_password)
-                    server.sendmail(
-                        smtp_username, email_entry.email, message.as_string()
-                    )
+                    server.sendmail(smtp_username, email_entry.email, message.as_string())
 
                 success_count += 1
-
             except Exception as e:
                 log_error(f"Error sending to {email_entry.email}: {str(e)}")
                 failed_count += 1
 
+        # Persist counts
         newsletter.sent_count = success_count
         newsletter.failed_count = failed_count
+        try:
+            db.session.commit()
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            log_error(f"DB commit failed: {e}")
 
         return True, f"Sent to {success_count} subscribers, failed for {failed_count}"
 
     except Exception as e:
+        log_error(f"send_newsletter_from_custom error: {e}")
         return False, str(e)
+    """Remove query params and fragments for consistent comparison."""
+    parsed = urlparse(link)
+    return urlunparse(parsed._replace(query="", fragment="")).strip().lower()
 
+@main.route("/fetch-rss-posts")
+@login_required
+def fetch_rss_posts():
+    rss_urls = [r.url for r in RssUrl.query.all()]
+    if not rss_urls:
+        return jsonify({"items": []})
+    all_posts = []
+
+    for feed_url in rss_urls:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries:
+                # print first entry title and link
+                # print(f"Processing entry: {entry.get('title', 'No title')} - {entry.get('link', 'No link')} - {entry.get('pubDate', 'No date')} - {entry.get('description', 'No description')}")
+
+                all_posts.append({
+                    "title": entry.get("title", "").strip(),
+                    "description": "",
+                    "link": entry.get("link", "").strip(),
+                    "pub_date": entry.get("published", ""),
+                })
+        except Exception as e:
+            print(f"Error parsing {feed_url}: {e}")
+
+    # Deduplicate by normalized link (most reliable for same content from diff sources)
+    unique_posts = {}
+    for post in all_posts:
+        key = normalize_link(post["link"])
+        if key not in unique_posts:
+            unique_posts[key] = post
+            
+    return jsonify({"items": list(unique_posts.values())})
+
+def normalize_link(s: str | None) -> str | None:
+    if not s:
+        return None
+    s = s.strip()
+    # Remove trailing slashes and unify http(s) case-insensitively
+    s = re.sub(r"/+$", "", s)
+    return s
 
 @main.route("/fetch-wordpress-posts")
 @login_required
@@ -958,7 +1024,7 @@ def send_newsletter():
                     content = content[:150] + "..." if len(content) > 150 else content
 
                 # Clean HTML tags from content for email
-                from bs4 import BeautifulSoup
+                
 
                 soup = BeautifulSoup(content, "html.parser")
                 clean_content = soup.get_text()
@@ -2592,7 +2658,7 @@ def send_newsletter_from_wordpress_posts():
             post_url = post.get("link", "#")
 
             # Clean HTML content
-            from bs4 import BeautifulSoup
+            
 
             soup = BeautifulSoup(content, "html.parser")
             clean_content = (

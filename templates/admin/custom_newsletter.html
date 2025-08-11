@@ -22,34 +22,37 @@
                             <label for="title" class="form-label">Newsletter Title</label>
                             <input type="text" class="form-control" id="title" name="title" required>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="subject" class="form-label">Email Subject</label>
                             <input type="text" class="form-control" id="subject" name="subject" required>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="scheduled_at" class="form-label">Schedule Date & Time (Optional)</label>
                             <input type="datetime-local" class="form-control" id="scheduled_at" name="scheduled_at">
-                            <small class="form-text text-muted">Leave empty to send immediately, or set a date/time to schedule for later</small>
+                            <small class="form-text text-muted">Leave empty to send immediately, or set a date/time to
+                                schedule for later</small>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="email_starting" class="form-label">Email Opening</label>
-                            <textarea class="form-control" id="email_starting" name="email_starting" rows="3" placeholder="Custom opening message (HTML allowed)">{{ settings.get('email_starting', '<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>') }}</textarea>
+                            <textarea class="form-control" id="email_starting" name="email_starting" rows="3"
+                                placeholder="Custom opening message (HTML allowed)">{{ settings.get('email_starting', '<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>') }}</textarea>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="email_ending" class="form-label">Email Closing</label>
-                            <textarea class="form-control" id="email_ending" name="email_ending" rows="3" placeholder="Custom closing message (HTML allowed)">{{ settings.get('email_ending', '<p><em>Thank you for subscribing to our newsletter!</em></p>') }}</textarea>
+                            <textarea class="form-control" id="email_ending" name="email_ending" rows="3"
+                                placeholder="Custom closing message (HTML allowed)">{{ settings.get('email_ending', '<p><em>Thank you for subscribing to our newsletter!</em></p>') }}</textarea>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label class="form-label">Selected Posts</label>
                             <div id="selectedPostsCount" class="text-muted">0 posts selected</div>
                             <input type="hidden" id="selected_posts" name="selected_posts" value="[]">
                         </div>
-                        
+
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary" id="saveBtn">
                                 <i class="fas fa-save"></i> <span id="saveBtnText">Save & Send Newsletter</span>
@@ -58,26 +61,27 @@
                                 <i class="fas fa-paper-plane"></i> Send Now
                             </button>
                         </div>
-                        
+
                         <!-- Cron Job URL for this newsletter (shown when editing) -->
                         <div id="cronJobUrl" style="display: none;" class="mt-3">
                             <div class="alert alert-info">
                                 <h6><i class="fas fa-link"></i> Cron Job URL for this Newsletter</h6>
                                 <p class="mb-2">Use this URL in your cron job to send this specific newsletter:</p>
                                 <code class="text-primary" id="newsletterCronUrl"></code>
-                                <small class="d-block text-muted mt-1">Example: <code>0 9 * * * curl "URL_HERE"</code></small>
+                                <small class="d-block text-muted mt-1">Example:
+                                    <code>0 9 * * * curl "URL_HERE"</code></small>
                             </div>
                         </div>
                     </form>
                 </div>
             </div>
         </div>
-        
+
         <!-- WordPress Posts Selection -->
         <div class="col-lg-8">
             <div class="card shadow mb-4">
                 <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                    <h6 class="m-0 font-weight-bold text-primary">Select WordPress Posts</h6>
+                    <h6 class="m-0 font-weight-bold text-primary">Select Posts</h6>
                     <button type="button" class="btn btn-info btn-sm" onclick="refreshPosts()">
                         <i class="fas fa-sync-alt"></i> Refresh Posts
                     </button>
@@ -87,9 +91,9 @@
                         <div class="spinner-border" role="status">
                             <span class="visually-hidden">Loading...</span>
                         </div>
-                        <p>Loading WordPress posts...</p>
+                        <p>Loading posts...</p>
                     </div>
-                    
+
                     <div id="postsContent" style="display: none;">
                         <div class="mb-3">
                             <div class="form-check">
@@ -99,12 +103,42 @@
                                 </label>
                             </div>
                         </div>
-                        
-                        <div id="postsList">
-                            <!-- Posts will be loaded here -->
+
+
+                        <!-- Tabs navigation -->
+                        <ul class="nav nav-tabs" id="postsTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="wp-tab" data-bs-toggle="tab"
+                                    data-bs-target="#wp-content" type="button" role="tab" aria-controls="wp-content"
+                                    aria-selected="true">
+                                    WordPress
+                                </button>
+                            </li>
+                            <li class="nav-item " role="presentation">
+                                <button class="nav-link " id="rss-tab" data-bs-toggle="tab" data-bs-target="#rss-content"
+                                    type="button" role="tab" aria-controls="rss-content" aria-selected="false">
+                                    RSS Feed
+                                </button>
+                            </li>
+                        </ul>
+                        <!-- Tabs content -->
+                        <div class="tab-content mt-3" id="postsTabContent">
+                            <div class="tab-pane fade show active" id="wp-content" role="tabpanel"
+                                aria-labelledby="wp-tab">
+                                <div id="postsList">
+                                    <!-- WordPress posts will load here -->
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="rss-content" role="tabpanel" aria-labelledby="rss-tab">
+                                <div id="rssPostsList">
+                                    <!-- RSS posts will load here -->
+                                </div>
+                            </div>
                         </div>
+
+
                     </div>
-                    
+
                     <div id="postsError" style="display: none;">
                         <div class="alert alert-danger">
                             <i class="fas fa-exclamation-triangle"></i>
@@ -124,251 +158,318 @@
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 <script>
-let selectedPosts = [];
-let allPosts = [];
-let isEditMode = false;
+    let selectedPosts = [];
+    let allPosts = [];
+    let isEditMode = false;
 
-document.addEventListener('DOMContentLoaded', function() {
-    const newsletterId = document.getElementById('newsletterId').value;
-    isEditMode = newsletterId !== '';
-    
-    if (isEditMode) {
-        loadNewsletterForEdit(newsletterId);
-        document.getElementById('sendNowBtn').style.display = 'block';
-        document.getElementById('cronJobUrl').style.display = 'block';
-        document.getElementById('newsletterCronUrl').textContent = `${window.location.origin}/send-custom-newsletter/${newsletterId}`;
-    }
-    
-    loadWordPressPosts();
-    setupEventListeners();
-});
+    document.addEventListener('DOMContentLoaded', function () {
+        const newsletterId = document.getElementById('newsletterId').value;
+        isEditMode = newsletterId !== '';
 
-function setupEventListeners() {
-    // Select all checkbox
-    document.getElementById('selectAllPosts').addEventListener('change', function() {
-        const checkboxes = document.querySelectorAll('.post-checkbox');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = this.checked;
-            if (this.checked) {
-                addPostToSelection(checkbox.value);
-            } else {
-                removePostFromSelection(checkbox.value);
-            }
-        });
-        updateSelectedPostsCount();
-    });
-    
-    // Form submission
-    document.getElementById('newsletterForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        // id saveBtnText set to loading spinner
-        document.getElementById('saveBtnText').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-        // document.getElementById('saveBtnText').textContent = 'Saving...';
-        saveNewsletter();
-    });
-    
-    // Update button text based on schedule
-    document.getElementById('scheduled_at').addEventListener('change', function() {
-        const saveBtnText = document.getElementById('saveBtnText');
-        if (this.value) {
-            saveBtnText.textContent = 'Save & Schedule Newsletter';
-        } else {
-            saveBtnText.textContent = 'Save & Send Newsletter';
+        if (isEditMode) {
+            loadNewsletterForEdit(newsletterId);
+            document.getElementById('sendNowBtn').style.display = 'block';
+            document.getElementById('cronJobUrl').style.display = 'block';
+            document.getElementById('newsletterCronUrl').textContent = `${window.location.origin}/send-custom-newsletter/${newsletterId}`;
         }
-    });
-    
-    // Send now button
-    document.getElementById('sendNowBtn').addEventListener('click', function() {
-        sendNewsletterNow();
-    });
-}
 
-function loadWordPressPosts() {
-    fetch('/fetch-wordpress-posts')
-        .then(response => response.json())
-        .then(data => {
-            document.getElementById('postsLoading').style.display = 'none';
-            
-            if (data.type === 'success' && data.posts) {
-                allPosts = data.posts;
-                displayPosts(data.posts);
-                document.getElementById('postsContent').style.display = 'block';
-            } else {
-                document.getElementById('errorMessage').textContent = data.message || 'Failed to load posts';
-                document.getElementById('postsError').style.display = 'block';
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            document.getElementById('postsLoading').style.display = 'none';
-            document.getElementById('errorMessage').textContent = 'Error loading posts';
-            document.getElementById('postsError').style.display = 'block';
-        });
-}
-
-function displayPosts(posts) {
-    const postsList = document.getElementById('postsList');
-    let html = '';
-    
-    posts.forEach(post => {
-        const title = post.title?.rendered || 'Untitled';
-        const excerpt = post.excerpt?.rendered || post.content?.rendered || '';
-        const date = new Date(post.date).toLocaleDateString();
-        const link = post.link || '#';
-        const postId = post.id;
-        
-        // Clean excerpt
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = excerpt;
-        const cleanExcerpt = tempDiv.textContent || tempDiv.innerText || '';
-        const shortExcerpt = cleanExcerpt.length > 150 ? cleanExcerpt.substring(0, 150) + '...' : cleanExcerpt;
-        
-        html += `
-            <div class="card mb-3">
-                <div class="card-body">
-                    <div class="form-check">
-                        <input class="form-check-input post-checkbox" type="checkbox" value="${postId}" id="post_${postId}">
-                        <label class="form-check-label" for="post_${postId}">
-                            <h6 class="card-title">${title}</h6>
-                        </label>
-                    </div>
-                    <p class="card-text text-muted small">Published: ${date}</p>
-                    <p class="card-text">${shortExcerpt}</p>
-                    <a href="${link}" target="_blank" class="btn btn-sm btn-outline-primary">
-                        <i class="fas fa-external-link-alt"></i> View Post
-                    </a>
-                </div>
-            </div>
-        `;
+        loadWordPressPosts();
+        // Load RSS posts
+        loadRssPosts();
+        setupEventListeners();
     });
-    
-    postsList.innerHTML = html;
-    
-    // Add event listeners to checkboxes
-    document.querySelectorAll('.post-checkbox').forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            if (this.checked) {
-                addPostToSelection(this.value);
-            } else {
-                removePostFromSelection(this.value);
-            }
+    // on click rss-tab
+    // document.getElementById('rss-tab').addEventListener('click', function () {
+    //     loadRssPosts();
+    // });
+
+    function setupEventListeners() {
+        // Select all checkbox
+        document.getElementById('selectAllPosts').addEventListener('change', function () {
+            const checkboxes = document.querySelectorAll('.post-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = this.checked;
+                if (this.checked) {
+                    addPostToSelection(checkbox.value);
+                } else {
+                    removePostFromSelection(checkbox.value);
+                }
+            });
             updateSelectedPostsCount();
         });
-    });
-}
 
-function addPostToSelection(postId) {
-    if (!selectedPosts.includes(postId)) {
-        selectedPosts.push(postId);
-    }
-}
+        // Form submission
+        document.getElementById('newsletterForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            // id saveBtnText set to loading spinner
+            document.getElementById('saveBtnText').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            // document.getElementById('saveBtnText').textContent = 'Saving...';
+            saveNewsletter();
+        });
 
-function removePostFromSelection(postId) {
-    selectedPosts = selectedPosts.filter(id => id !== postId);
-}
-
-function updateSelectedPostsCount() {
-    document.getElementById('selectedPostsCount').textContent = `${selectedPosts.length} posts selected`;
-    document.getElementById('selected_posts').value = JSON.stringify(selectedPosts);
-}
-
-function saveNewsletter() {
-    const formData = new FormData(document.getElementById('newsletterForm'));
-    
-    if (selectedPosts.length === 0) {
-        toastr.error('Please select at least one post for the newsletter');
-        return;
-    }
-    
-    const url = isEditMode ? `/admin/custom-newsletter/${document.getElementById('newsletterId').value}` : '/admin/custom-newsletter/create';
-    const method = isEditMode ? 'PUT' : 'POST';
-    
-    fetch(url, {
-        method: method,
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.type === 'success') {
-            toastr.success(data.message);
-            // document.getElementById('saveBtnText').textContent = 'Save & Send Newsletter';
-            if (!isEditMode) {
-                // Redirect to newsletter management page
-                setTimeout(() => {
-                    window.location.href = '/admin/newsletter-emails';
-                }, 1500);
+        // Update button text based on schedule
+        document.getElementById('scheduled_at').addEventListener('change', function () {
+            const saveBtnText = document.getElementById('saveBtnText');
+            if (this.value) {
+                saveBtnText.textContent = 'Save & Schedule Newsletter';
+            } else {
+                saveBtnText.textContent = 'Save & Send Newsletter';
             }
-        } else {
-            toastr.error(data.message);
+        });
+
+        // Send now button
+        document.getElementById('sendNowBtn').addEventListener('click', function () {
+            sendNewsletterNow();
+        });
+    }
+
+    function loadWordPressPosts() {
+        fetch('/fetch-wordpress-posts')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('postsLoading').style.display = 'none';
+
+                if (data.type === 'success' && data.posts) {
+                    allPosts = data.posts;
+                    displayPosts(data.posts);
+                    document.getElementById('postsContent').style.display = 'block';
+                } else {
+                    document.getElementById('errorMessage').textContent = data.message || 'Failed to load posts';
+                    document.getElementById('postsError').style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('postsLoading').style.display = 'none';
+                document.getElementById('errorMessage').textContent = 'Error loading posts';
+                document.getElementById('postsError').style.display = 'block';
+            });
+    }
+
+    function loadRssPosts() {
+        document.getElementById('postsLoading').style.display = 'block';
+        fetch('/fetch-rss-posts')
+
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('postsLoading').style.display = 'none';
+
+                if (data.items) {
+                    allPosts = data.items;
+                    displayPosts(data.items, false);
+                    document.getElementById('postsContent').style.display = 'block';
+                } else {
+                    document.getElementById('errorMessage').textContent = data.message || 'Failed to load posts';
+                    document.getElementById('postsError').style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('postsLoading').style.display = 'none';
+                document.getElementById('errorMessage').textContent = 'Error loading posts';
+                document.getElementById('postsError').style.display = 'block';
+            });
+    }
+
+    function displayPosts(posts, wp = true) {
+        const postsList = wp ? document.getElementById('postsList') : document.getElementById('rssPostsList');
+        let html = '';
+
+        posts.forEach(post => {
+
+            const title = post.title?.rendered || post.title || 'Untitled';
+            const excerpt = post.excerpt?.rendered || post.content?.rendered || post.title || '';
+            const date = wp
+                ? new Date(post.date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+                : new Date(post.pub_date || post.published).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+            const link = post.link || '#';
+            const postId = post.id || post.link;
+
+            // Clean excerpt
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = excerpt;
+            const cleanExcerpt = tempDiv.textContent || tempDiv.innerText || '';
+            const shortExcerpt = cleanExcerpt.length > 150 ? cleanExcerpt.substring(0, 150) + '...' : cleanExcerpt;
+
+            html += `
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="form-check">
+                <input class="form-check-input post-checkbox"
+                       type="checkbox"
+                       id="post_${postId}"
+                       data-id="${postId}"
+                       data-title="${title}"
+                       data-snippet="${shortExcerpt}"
+                       data-date="${date}"
+                       data-link="${link}">
+                <label class="form-check-label" for="post_${postId}">
+                    <h6 class="card-title">${title}</h6>
+                </label>
+            </div>
+            <p class="card-text text-muted small">Published: ${date}</p>
+            <p class="card-text">${shortExcerpt}</p>
+            <a href="${link}" target="_blank" class="btn btn-sm btn-outline-primary">
+                <i class="fas fa-external-link-alt"></i> View Post
+            </a>
+        </div>
+    </div>
+`;
+        });
+
+        postsList.innerHTML = html;
+
+        // Add event listeners to checkboxes
+        document.querySelectorAll('.post-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', function () {
+                if (this.checked) {
+                    addPostToSelection(this.value);
+                } else {
+                    removePostFromSelection(this.value);
+                }
+                updateSelectedPostsCount();
+            });
+        });
+    }
+
+    function addPostToSelection(postId) {
+        if (!selectedPosts.includes(postId)) {
+            selectedPosts.push(postId);
         }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        toastr.error('An error occurred while saving the newsletter');
-    });
-}
-
-function sendNewsletterNow() {
-    if (confirm('Are you sure you want to send this newsletter now?')) {
-        const newsletterId = document.getElementById('newsletterId').value;
-        fetch(`/admin/custom-newsletter/${newsletterId}/send`, {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.type === 'success') {
-                toastr.success(data.message);
-                setTimeout(() => {
-                    window.location.href = '/admin/newsletter-emails';
-                }, 1500);
-            } else {
-                toastr.error(data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            toastr.error('An error occurred while sending the newsletter');
-        });
     }
-}
 
-function loadNewsletterForEdit(newsletterId) {
-    fetch(`/admin/custom-newsletter/${newsletterId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.type === 'success') {
-                document.getElementById('title').value = data.title;
-                document.getElementById('subject').value = data.subject;
-                document.getElementById('email_starting').value = data.email_starting || '';
-                document.getElementById('email_ending').value = data.email_ending || '';
-                
-                if (data.scheduled_at) {
-                    // Convert datetime-local format
-                    const scheduledDate = new Date(data.scheduled_at);
-                    const localDateTime = scheduledDate.toISOString().slice(0, 16);
-                    document.getElementById('scheduled_at').value = localDateTime;
-                }
-                
-                // Load selected posts
-                if (data.selected_posts) {
-                    selectedPosts = JSON.parse(data.selected_posts);
-                    updateSelectedPostsCount();
-                }
-            } else {
-                toastr.error(data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            toastr.error('Error loading newsletter for editing');
+    function removePostFromSelection(postId) {
+        selectedPosts = selectedPosts.filter(id => id !== postId);
+    }
+
+    function updateSelectedPostsCount() {
+        document.getElementById('selectedPostsCount').textContent = `${selectedPosts.length} posts selected`;
+        document.getElementById('selected_posts').value = JSON.stringify(selectedPosts);
+    }
+
+    function saveNewsletter() {
+        const form = document.getElementById('newsletterForm');
+
+        // build array of objects
+        const selectedPosts = [];
+        document.querySelectorAll(".post-checkbox:checked").forEach(cb => {
+            selectedPosts.push({
+                id: cb.dataset.id,
+                title: cb.dataset.title,
+                snippet: cb.dataset.snippet,
+                pub_date: cb.dataset.date,
+                link: cb.dataset.link
+            });
         });
-}
 
-function refreshPosts() {
-    document.getElementById('postsLoading').style.display = 'block';
-    document.getElementById('postsContent').style.display = 'none';
-    document.getElementById('postsError').style.display = 'none';
-    loadWordPressPosts();
-}
+        const formData = new FormData(form);
+
+        // remove any prior field from the DOM that might inject "on"
+        formData.delete('selected_posts');
+
+        // append a proper JSON array string
+        formData.append('selected_posts', JSON.stringify(selectedPosts));
+
+        if (selectedPosts.length === 0) {
+            toastr.error('Please select at least one post for the newsletter');
+            return;
+        }
+
+        const url = isEditMode ? `/admin/custom-newsletter/${document.getElementById('newsletterId').value}` : '/admin/custom-newsletter/create';
+        const method = isEditMode ? 'PUT' : 'POST';
+
+        fetch(url, {
+            method: method,
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    toastr.success(data.message);
+                    // document.getElementById('saveBtnText').textContent = 'Save & Send Newsletter';
+                    if (!isEditMode) {
+                        // Redirect to newsletter management page
+                        setTimeout(() => {
+                            window.location.href = '/admin/newsletter-emails';
+                        }, 1500);
+                    }
+                } else {
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                toastr.error('An error occurred while saving the newsletter');
+            });
+    }
+
+    function sendNewsletterNow() {
+        if (confirm('Are you sure you want to send this newsletter now?')) {
+            const newsletterId = document.getElementById('newsletterId').value;
+            fetch(`/admin/custom-newsletter/${newsletterId}/send`, {
+                method: 'POST'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.type === 'success') {
+                        toastr.success(data.message);
+                        setTimeout(() => {
+                            window.location.href = '/admin/newsletter-emails';
+                        }, 1500);
+                    } else {
+                        toastr.error(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    toastr.error('An error occurred while sending the newsletter');
+                });
+        }
+    }
+
+    function loadNewsletterForEdit(newsletterId) {
+        fetch(`/admin/custom-newsletter/${newsletterId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    console.log('Loaded newsletter data:', data);
+                    document.getElementById('title').value = data.title;
+                    document.getElementById('subject').value = data.subject;
+                    document.getElementById('email_starting').value = data.email_starting || '';
+                    document.getElementById('email_ending').value = data.email_ending || '';
+
+                    if (data.scheduled_at) {
+                        // Convert datetime-local format
+                        const scheduledDate = new Date(data.scheduled_at);
+                        const localDateTime = scheduledDate.toISOString().slice(0, 16);
+                        document.getElementById('scheduled_at').value = localDateTime;
+                    }
+
+                    // Load selected posts
+                    if (data.selected_posts) {
+                        console.log('Selected posts:', data.selected_posts);
+                        selectedPosts = JSON.parse(data.selected_posts);
+                        updateSelectedPostsCount();
+                    }
+                } else {
+                    console.error('Error loading newsletter:', data.message);
+                    document.getElementById('errorMessage').textContent = data.message || 'Failed to load newsletter';
+                    document.getElementById('postsError').style.display = 'block';
+                    toastr.error(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                toastr.error('Error loading newsletter for editing');
+            });
+    }
+
+    function refreshPosts() {
+        document.getElementById('postsLoading').style.display = 'block';
+        document.getElementById('postsContent').style.display = 'none';
+        document.getElementById('postsError').style.display = 'none';
+        loadWordPressPosts();
+        loadRssPosts();
+    }
 </script>
-{% endblock %} 
+{% endblock %}

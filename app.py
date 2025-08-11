@@ -1,4 +1,5 @@
 import os
+import curses
 from flask import Flask
 from flask_login import LoginManager, current_user
 from flask_migrate import Migrate
