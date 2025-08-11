@@ -292,4 +292,5 @@ def create_app(config_name="default"):
 if __name__ == "__main__":
     app = create_app()
     CORS(app)
-    app.run(host="0.0.0.0", port=5678, debug=True)
+    # app.run(host="0.0.0.0", port=5678, debug=True,use_reloader=False)
+    app.run( port=5678, debug=True)

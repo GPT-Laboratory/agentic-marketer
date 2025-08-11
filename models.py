@@ -100,6 +100,12 @@ class NewsletterEmail(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+class RssUrl(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    url = db.Column(db.String(255), unique=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Newsletter(db.Model):
@@ -115,6 +121,7 @@ class Newsletter(db.Model):
     
     # Selected posts (stored as JSON array of post IDs)
     selected_posts = db.Column(db.Text, nullable=True)  # JSON array of WordPress post IDs
+    post_type= db.Column(db.String(20), default='wp')  # 'blog' or 'social'
     
     # Newsletter settings
     email_starting = db.Column(db.Text, nullable=True)

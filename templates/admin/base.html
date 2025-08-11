@@ -143,9 +143,17 @@
                     <i class="fas fa-question-circle"></i>FAQs
                 </a>
                 <div class="nav-divider"></div>
-                <a href="{{ url_for('main.admin_newsletter_emails') }}"
-                    class="nav-link {% if request.endpoint == 'main.admin_newsletter_emails' %}active{% endif %}">
-                    <i class="fas fa-envelope"></i>Newsletter
+                <a href="{{ url_for('main.admin_subscription') }}"
+                    class="nav-link {% if request.endpoint == 'main.admin_subscription' %}active{% endif %}">
+                    <i class="fas fa-envelope"></i>Subscriptions
+                </a>
+                <a href="{{ url_for('main.admin_newsletter') }}"
+                    class="nav-link {% if request.endpoint == 'main.admin_newsletter' %}active{% endif %}">
+                    <i class="fas fa-newspaper"></i>Newsletter
+                </a>
+                <a href="{{ url_for('main.admin_rss_url') }}"
+                    class="nav-link {% if request.endpoint == 'main.admin_rss_url' %}active{% endif %}">
+                    <i class="fas fa-rss"></i>RSS URLs
                 </a>
 
                 <div class="nav-divider"></div>

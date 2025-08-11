@@ -47,6 +47,7 @@ class YourModel(db.Model):
 
 2. Create and apply the migration:
 ```bash
+python -m flask db init
 # Create migration
 python -m flask db migrate -m "Add new_column to YourModel"
 

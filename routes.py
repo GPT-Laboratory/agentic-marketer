@@ -25,6 +25,7 @@ from models import (
     TwitterPost,
     NewsletterEmail,
     Newsletter,
+    RssUrl,
 )
 from urllib.parse import urlparse
 
@@ -84,10 +85,12 @@ def contact():
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template("public/contact.html", settings=settings)
 
+
 def utc_naive_to_local(dt):
     if dt:
         return dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Helsinki"))
     return None
+
 
 @main.route("/api/chat", methods=["POST"])
 def chat():
@@ -215,14 +218,6 @@ def admin_profile():
         except Exception as e:
             flash(f"Error updating profile: {str(e)}", "error")
     return render_template("admin/profile.html")
-
-
-@main.route("/admin/roles")
-@login_required
-def admin_roles():
-    roles = Role.query.all()
-    settings = {s.key: s.value for s in Settings.query.all()}
-    return render_template("admin/roles.html", roles=roles, settings=settings)
 
 
 @main.route("/admin/users")
@@ -374,21 +369,32 @@ def platform_settings():
 
 @main.route("/admin/newsletter-emails")
 @login_required
-def admin_newsletter_emails():
+def admin_newsletter():
     emails = NewsletterEmail.query.order_by(NewsletterEmail.created_at.desc()).all()
     newsletters = Newsletter.query.order_by(Newsletter.created_at.desc()).all()
     for newsletter in newsletters:
         newsletter.local_scheduled_at = utc_naive_to_local(newsletter.scheduled_at)
-        
+
     settings = {s.key: s.value for s in Settings.query.all()}
     return render_template(
-        "admin/newsletter_emails.html", emails=emails, newsletters=newsletters, settings=settings
+        "admin/newsletter.html",
+        emails=emails,
+        newsletters=newsletters,
+        settings=settings,
     )
 
 
-@main.route("/admin/newsletter-emails/add", methods=["POST"])
+@main.route("/admin/subscription")
 @login_required
-def add_newsletter_email():
+def admin_subscription():
+    emails = NewsletterEmail.query.order_by(NewsletterEmail.created_at.desc()).all()
+    settings = {s.key: s.value for s in Settings.query.all()}
+    return render_template("admin/subscription.html", emails=emails, settings=settings)
+
+
+@main.route("/admin/subscription/add", methods=["POST"])
+@login_required
+def add_subscription_email():
     email = request.form.get("email")
     if email:
         existing = NewsletterEmail.query.filter_by(email=email).first()
@@ -399,31 +405,31 @@ def add_newsletter_email():
             db.session.add(new_email)
             db.session.commit()
             flash("Email added successfully.", "success")
-    return redirect(url_for("main.admin_newsletter_emails"))
+    return redirect(url_for("main.admin_subscription"))
 
 
-@main.route("/admin/newsletter-emails/toggle/<int:email_id>")
+@main.route("/admin/subscription/toggle/<int:email_id>", methods=["POST"])
 @login_required
-def toggle_newsletter_email(email_id):
+def toggle_subscription_email(email_id):
     email_entry = db.session.get(NewsletterEmail, email_id)
     if not email_entry:
         abort(404)
     email_entry.is_active = not email_entry.is_active
     db.session.commit()
     flash("Email status updated successfully.", "success")
-    return redirect(url_for("main.admin_newsletter_emails"))
+    return redirect(url_for("main.admin_subscription"))
 
 
-@main.route("/admin/newsletter-emails/delete/<int:email_id>", methods=["POST"])
+@main.route("/admin/subscription/delete/<int:email_id>", methods=["POST"])
 @login_required
-def delete_newsletter_email(email_id):
+def delete_subscription_email(email_id):
     email_entry = db.session.get(NewsletterEmail, email_id)
     if not email_entry:
         abort(404)
     db.session.delete(email_entry)
     db.session.commit()
     flash("Email deleted successfully.", "success")
-    return redirect(url_for("main.admin_newsletter_emails"))
+    return redirect(url_for("main.admin_subscription"))
 
 
 @main.route("/admin/custom-newsletter")
@@ -445,13 +451,13 @@ def create_custom_newsletter():
         selected_posts = request.form.get("selected_posts")  # JSON array of post IDs
         email_starting = request.form.get("email_starting")
         email_ending = request.form.get("email_ending")
-        
+
         # Parse scheduled_at datetime
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
                 # Handle datetime-local format (YYYY-MM-DDTHH:MM) and convert to expected format
-                date_str = scheduled_at_str.strip().replace('T', ' ')
+                date_str = scheduled_at_str.strip().replace("T", " ")
                 # 1) parse as naive local (the time user picked)
                 local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                 # 2) attach Europe/Helsinki tz
@@ -467,9 +473,9 @@ def create_custom_newsletter():
                         "message": "Invalid date format. Use YYYY-MM-DD HH:MM",
                     }
                 )
-        
+
         status = "scheduled" if scheduled_at else "draft"
-        
+
         newsletter = Newsletter(
             title=title,
             subject=subject,
@@ -478,12 +484,12 @@ def create_custom_newsletter():
             status=status,
             created_by=current_user.id,
             email_starting=email_starting,
-            email_ending=email_ending
+            email_ending=email_ending,
         )
-        
+
         db.session.add(newsletter)
         db.session.commit()
-        
+
         # If no schedule is set, send the newsletter immediately
         if not scheduled_at:
             success, error = send_newsletter_from_custom(newsletter)
@@ -491,39 +497,65 @@ def create_custom_newsletter():
                 newsletter.status = "sent"
                 newsletter.sent_at = datetime.now()
                 db.session.commit()
-                return jsonify({"type": "success", "message": "Newsletter sent successfully!", "newsletter_id": newsletter.id})
+                return jsonify(
+                    {
+                        "type": "success",
+                        "message": "Newsletter sent successfully!",
+                        "newsletter_id": newsletter.id,
+                    }
+                )
             else:
                 newsletter.error_message = error
                 db.session.commit()
-                return jsonify({"type": "error", "message": f"Newsletter created but failed to send: {error}", "newsletter_id": newsletter.id})
-        
-        return jsonify({"type": "success", "message": "Newsletter scheduled successfully.", "newsletter_id": newsletter.id})
-        
+                return jsonify(
+                    {
+                        "type": "error",
+                        "message": f"Newsletter created but failed to send: {error}",
+                        "newsletter_id": newsletter.id,
+                    }
+                )
+
+        return jsonify(
+            {
+                "type": "success",
+                "message": "Newsletter scheduled successfully.",
+                "newsletter_id": newsletter.id,
+            }
+        )
+
     except Exception as e:
         db.session.rollback()
         return jsonify({"type": "error", "message": str(e)})
 
 
-@main.route("/admin/custom-newsletter/<int:newsletter_id>", methods=["GET", "PUT", "DELETE"])
+@main.route(
+    "/admin/custom-newsletter/<int:newsletter_id>", methods=["GET", "PUT", "DELETE"]
+)
 @login_required
 def manage_custom_newsletter(newsletter_id):
     """Manage a specific newsletter"""
     newsletter = db.session.get(Newsletter, newsletter_id)
     if not newsletter:
         return jsonify({"type": "error", "message": "Newsletter not found"}), 404
-    
+
     if request.method == "GET":
-        return jsonify({
-            "id": newsletter.id,
-            "title": newsletter.title,
-            "subject": newsletter.subject,
-            "scheduled_at": utc_naive_to_local(newsletter.scheduled_at) if newsletter.scheduled_at else "",
-            "selected_posts": newsletter.selected_posts,
-            "email_starting": newsletter.email_starting,
-            "email_ending": newsletter.email_ending,
-            "status": newsletter.status
-        })
-    
+        return jsonify(
+            {
+                "id": newsletter.id,
+                "title": newsletter.title,
+                "subject": newsletter.subject,
+                "scheduled_at": (
+                    utc_naive_to_local(newsletter.scheduled_at)
+                    if newsletter.scheduled_at
+                    else ""
+                ),
+                "selected_posts": newsletter.selected_posts,
+                "email_starting": newsletter.email_starting,
+                "email_ending": newsletter.email_ending,
+                "status": newsletter.status,
+            }
+        )
+
     elif request.method == "PUT":
         try:
             newsletter.title = request.form.get("title")
@@ -531,15 +563,17 @@ def manage_custom_newsletter(newsletter_id):
             newsletter.selected_posts = request.form.get("selected_posts")
             newsletter.email_starting = request.form.get("email_starting")
             newsletter.email_ending = request.form.get("email_ending")
-            
+
             scheduled_at_str = request.form.get("scheduled_at")
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    date_str = scheduled_at_str.strip().replace("T", " ")
                     # 1) parse as naive local (the time user picked)
                     local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                     # 2) attach Europe/Helsinki tz
-                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    local_aware = local_naive.replace(
+                        tzinfo=ZoneInfo("Europe/Helsinki")
+                    )
                     # 3) convert to UTC
                     utc_aware = local_aware.astimezone(timezone.utc)
                     # 4) store as naive UTC (matches your current model)
@@ -556,9 +590,9 @@ def manage_custom_newsletter(newsletter_id):
             else:
                 newsletter.scheduled_at = None
                 newsletter.status = "draft"
-            
+
             db.session.commit()
-            
+
             # If no schedule is set, send the newsletter immediately
             if not newsletter.scheduled_at:
                 success, error = send_newsletter_from_custom(newsletter)
@@ -566,23 +600,34 @@ def manage_custom_newsletter(newsletter_id):
                     newsletter.status = "sent"
                     newsletter.sent_at = datetime.now()
                     db.session.commit()
-                    return jsonify({"type": "success", "message": "Newsletter sent successfully!"})
+                    return jsonify(
+                        {"type": "success", "message": "Newsletter sent successfully!"}
+                    )
                 else:
                     newsletter.error_message = error
                     db.session.commit()
-                    return jsonify({"type": "error", "message": f"Newsletter updated but failed to send: {error}"})
-            
-            return jsonify({"type": "success", "message": "Newsletter updated successfully."})
-            
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "message": f"Newsletter updated but failed to send: {error}",
+                        }
+                    )
+
+            return jsonify(
+                {"type": "success", "message": "Newsletter updated successfully."}
+            )
+
         except Exception as e:
             db.session.rollback()
             return jsonify({"type": "error", "message": str(e)})
-    
+
     elif request.method == "DELETE":
         try:
             db.session.delete(newsletter)
             db.session.commit()
-            return jsonify({"type": "success", "message": "Newsletter deleted successfully."})
+            return jsonify(
+                {"type": "success", "message": "Newsletter deleted successfully."}
+            )
         except Exception as e:
             db.session.rollback()
             return jsonify({"type": "error", "message": str(e)})
@@ -596,19 +641,23 @@ def send_custom_newsletter(newsletter_id):
         newsletter = db.session.get(Newsletter, newsletter_id)
         if not newsletter:
             return jsonify({"type": "error", "message": "Newsletter not found"}), 404
-        
+
         success, error = send_newsletter_from_custom(newsletter)
-        
+
         if success:
             newsletter.status = "sent"
             newsletter.sent_at = datetime.now()
             db.session.commit()
-            return jsonify({"type": "success", "message": "Newsletter sent successfully."})
+            return jsonify(
+                {"type": "success", "message": "Newsletter sent successfully."}
+            )
         else:
             newsletter.error_message = error
             db.session.commit()
-            return jsonify({"type": "error", "message": f"Failed to send newsletter: {error}"})
-            
+            return jsonify(
+                {"type": "error", "message": f"Failed to send newsletter: {error}"}
+            )
+
     except Exception as e:
         return jsonify({"type": "error", "message": str(e)})
 
@@ -620,22 +669,29 @@ def send_custom_newsletter_unauthenticated(newsletter_id):
         newsletter = db.session.get(Newsletter, newsletter_id)
         if not newsletter:
             return jsonify({"type": "error", "message": "Newsletter not found"}), 404
-        
+
         if newsletter.status != "scheduled":
-            return jsonify({"type": "error", "message": "Newsletter is not scheduled"}), 400
-        
+            return (
+                jsonify({"type": "error", "message": "Newsletter is not scheduled"}),
+                400,
+            )
+
         success, error = send_newsletter_from_custom(newsletter)
-        
+
         if success:
             newsletter.status = "sent"
             newsletter.sent_at = datetime.now()
             db.session.commit()
-            return jsonify({"type": "success", "message": "Newsletter sent successfully."})
+            return jsonify(
+                {"type": "success", "message": "Newsletter sent successfully."}
+            )
         else:
             newsletter.error_message = error
             db.session.commit()
-            return jsonify({"type": "error", "message": f"Failed to send newsletter: {error}"})
-            
+            return jsonify(
+                {"type": "error", "message": f"Failed to send newsletter: {error}"}
+            )
+
     except Exception as e:
         return jsonify({"type": "error", "message": str(e)})
 
@@ -645,77 +701,91 @@ def send_newsletter_from_custom(newsletter):
     try:
         # Get settings
         settings = {s.key: s.value for s in Settings.query.all()}
-        
+
         # Get selected posts
-        selected_posts = json.loads(newsletter.selected_posts) if newsletter.selected_posts else []
-        
+        selected_posts = (
+            json.loads(newsletter.selected_posts) if newsletter.selected_posts else []
+        )
+
         if not selected_posts:
             return False, "No posts selected for newsletter"
-        
+
         # Fetch WordPress posts
         wp_url = settings.get("wp_site_url", "").rstrip("/")
         wp_user = settings.get("wp_username", "")
         wp_app_password = settings.get("wp_app_password", "")
-        
+
         if not (wp_url and wp_user and wp_app_password):
             return False, "WordPress credentials not configured"
-        
+
         # Get posts from WordPress REST API
         api_url = f"{wp_url}/wp-json/wp/v2/posts"
-        
+
         # Build email content
-        email_starting = newsletter.email_starting or settings.get("email_starting", "<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>")
-        email_ending = newsletter.email_ending or settings.get("email_ending", "<p><em>Thank you for subscribing to our newsletter!</em></p>")
-        
+        email_starting = newsletter.email_starting or settings.get(
+            "email_starting",
+            "<h3>🌟 Hello from Your Team!</h3><p>Here are our selected blog highlights:</p><hr>",
+        )
+        email_ending = newsletter.email_ending or settings.get(
+            "email_ending",
+            "<p><em>Thank you for subscribing to our newsletter!</em></p>",
+        )
+
         post_html = ""
-        
+
         for post_id in selected_posts:
             try:
                 response = requests.get(
                     f"{api_url}/{post_id}",
                     auth=HTTPBasicAuth(wp_user, wp_app_password),
-                    timeout=10
+                    timeout=10,
                 )
-                
+
                 if response.status_code == 200:
                     post = response.json()
                     title = post.get("title", {}).get("rendered", "Untitled")
-                    content = post.get("excerpt", {}).get("rendered", "") or post.get("content", {}).get("rendered", "")
+                    content = post.get("excerpt", {}).get("rendered", "") or post.get(
+                        "content", {}
+                    ).get("rendered", "")
                     post_url = post.get("link", "#")
-                    
+
                     # Clean HTML content
                     soup = BeautifulSoup(content, "html.parser")
                     clean_content = soup.get_text()
-                    clean_content = clean_content[:200] + "..." if len(clean_content) > 200 else clean_content
-                    
+                    clean_content = (
+                        clean_content[:200] + "..."
+                        if len(clean_content) > 200
+                        else clean_content
+                    )
+
                     post_html += f"<p><strong><a href='{post_url}'>{title}</a></strong><br>{clean_content}</p><hr>"
-                    
+
             except Exception as e:
                 log_error(f"Error fetching post {post_id}: {str(e)}")
                 continue
-        
+
         if not post_html:
             return False, "No valid posts found"
-        
+
         email_body = email_starting + post_html + email_ending
-        
+
         # Send to subscribers
         active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
         if not active_emails:
             return False, "No active subscribers found"
-        
+
         # SMTP settings
         smtp_server = settings.get("SMTP_SERVER")
         smtp_port = settings.get("SMTP_PORT")
         smtp_username = settings.get("SMTP_USERNAME")
         smtp_password = settings.get("SMTP_PASSWORD")
-        
+
         if not all([smtp_server, smtp_port, smtp_username, smtp_password]):
             return False, "SMTP settings incomplete"
-        
+
         success_count = 0
         failed_count = 0
-        
+
         for email_entry in active_emails:
             try:
                 message = MIMEMultipart()
@@ -723,22 +793,24 @@ def send_newsletter_from_custom(newsletter):
                 message["To"] = email_entry.email
                 message["Subject"] = newsletter.subject
                 message.attach(MIMEText(email_body, "html"))
-                
+
                 with smtplib.SMTP_SSL(smtp_server, int(smtp_port)) as server:
                     server.login(smtp_username, smtp_password)
-                    server.sendmail(smtp_username, email_entry.email, message.as_string())
-                
+                    server.sendmail(
+                        smtp_username, email_entry.email, message.as_string()
+                    )
+
                 success_count += 1
-                
+
             except Exception as e:
                 log_error(f"Error sending to {email_entry.email}: {str(e)}")
                 failed_count += 1
-        
+
         newsletter.sent_count = success_count
         newsletter.failed_count = failed_count
-        
+
         return True, f"Sent to {success_count} subscribers, failed for {failed_count}"
-        
+
     except Exception as e:
         return False, str(e)
 
@@ -803,9 +875,16 @@ def fetch_wordpress_posts():
 def send_newsletter():
     # Check if we should use WordPress posts or local posts
     use_wordpress = request.args.get("source", "local") == "wordpress"
-    welcome = Settings.query.filter_by(key="email_starting").first().value if Settings.query.filter_by(key="email_starting").first() else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
-    email_ending = Settings.query.filter_by(key="email_ending").first().value if Settings.query.filter_by(key="email_ending").first() else "<p><em>Thank you for subscribing to our newsletter!</em></p>"
-    
+    welcome = (
+        Settings.query.filter_by(key="email_starting").first().value
+        if Settings.query.filter_by(key="email_starting").first()
+        else "<h3>🌟 Hello from Your Team!</h3><p>Here are our blog highlights from this month:</p><hr>"
+    )
+    email_ending = (
+        Settings.query.filter_by(key="email_ending").first().value
+        if Settings.query.filter_by(key="email_ending").first()
+        else "<p><em>Thank you for subscribing to our newsletter!</em></p>"
+    )
 
     if use_wordpress:
         # Get WordPress posts
@@ -976,6 +1055,14 @@ def send_newsletter():
 
 
 # API routes for CRUD operations
+@main.route("/admin/roles")
+@login_required
+def admin_roles():
+    roles = Role.query.all()
+    settings = {s.key: s.value for s in Settings.query.all()}
+    return render_template("admin/roles.html", roles=roles, settings=settings)
+
+
 @main.route("/api/role", methods=["POST"])
 @login_required
 def api_create_role():
@@ -1011,6 +1098,67 @@ def api_manage_role(id):
     role.name = name
     db.session.commit()
     return jsonify({"message": "Role updated successfully", "type": "success"})
+
+
+# API routes for rss url CRUD operations
+@main.route("/admin/rss-url")
+@login_required
+def admin_rss_url():
+    # descending order by created_at
+    rss_urls = RssUrl.query.order_by(RssUrl.created_at.desc()).all()
+    settings = {s.key: s.value for s in Settings.query.all()}
+    return render_template("admin/rss_url.html", rss_urls=rss_urls, settings=settings)
+
+
+@main.route("/api/rss-url", methods=["POST"])
+@login_required
+def api_create_rss_url():
+    try:
+        url = request.form.get("url")
+        if not url:
+            return jsonify({"message": "URL is required", "type": "error"}), 400
+
+        # unique URL check
+        existing_url = RssUrl.query.filter_by(url=url).first()
+        print(f"Checking for existing URL: {url}")
+
+        if existing_url:
+            return jsonify({"message": "URL already exists", "type": "error"}), 400
+
+        rss_url = RssUrl(url=url)
+        db.session.add(rss_url)
+        db.session.commit()
+        return jsonify({"message": "RSS URL created successfully", "type": "success"})
+    except Exception as e:
+        return jsonify({"message": str(e), "type": "error"}), 500
+
+
+@main.route("/api/rss-url/<int:id>", methods=["PUT", "DELETE"])
+@login_required
+def api_manage_rss_url(id):
+    rss_url = db.session.get(RssUrl, id)
+    if not rss_url:
+        return jsonify({"type": "error", "message": "RSS URL not found"}), 404
+
+    if request.method == "DELETE":
+        db.session.delete(rss_url)
+        db.session.commit()
+        return jsonify({"message": "RSS URL deleted successfully", "type": "success"})
+
+    url = request.form.get("url")
+    if not url:
+        return jsonify({"message": "URL is required", "type": "error"}), 400
+    
+    # unique URL check
+    existing_url = RssUrl.query.filter_by(url=url).first()
+    print(f"Checking for existing URL: {url}")
+
+    if existing_url:
+        return jsonify({"message": "URL already exists", "type": "error"}), 400
+
+    rss_url.url = url
+    db.session.commit()
+    return jsonify({"message": "RSS URL updated successfully", "type": "success"})
 
 
 @main.route("/api/user", methods=["POST"])
@@ -1293,7 +1441,9 @@ def api_manage_faq(faq_id):
 @main.route("/admin/blogs")
 @login_required
 def admin_blogs():
-    blogs = Blog.query.filter_by(content_type='blog').order_by(Blog.created_at.desc()).all()
+    blogs = (
+        Blog.query.filter_by(content_type="blog").order_by(Blog.created_at.desc()).all()
+    )
     for blog in blogs:
         blog.local_scheduled_at = utc_naive_to_local(blog.scheduled_at)
     return render_template("admin/blogs.html", blogs=blogs)
@@ -1302,7 +1452,11 @@ def admin_blogs():
 @main.route("/admin/social-posts")
 @login_required
 def admin_social_posts():
-    social_posts = Blog.query.filter_by(content_type='social').order_by(Blog.created_at.desc()).all()
+    social_posts = (
+        Blog.query.filter_by(content_type="social")
+        .order_by(Blog.created_at.desc())
+        .all()
+    )
     for post in social_posts:
         post.local_scheduled_at = utc_naive_to_local(post.scheduled_at)
     return render_template("admin/social_posts.html", social_posts=social_posts)
@@ -1321,7 +1475,7 @@ def admin_add_blog():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                date_str = scheduled_at_str.strip().replace('T', ' ')
+                date_str = scheduled_at_str.strip().replace("T", " ")
                 # 1) parse as naive local (the time user picked)
                 local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                 # 2) attach Europe/Helsinki tz
@@ -1346,17 +1500,17 @@ def admin_add_blog():
             user_id=current_user.id,
             scheduled_at=scheduled_at,
             status=status,
-            content_type='blog',
+            content_type="blog",
             post_to_wordpress=post_to_wordpress_flag,
         )
         db.session.add(blog)
         db.session.commit()
-        
+
         # Publish now if needed
         if status == "published" and post_to_wordpress_flag:
             settings = {s.key: s.value for s in Settings.query.all()}
             post_to_wordpress(blog, settings)
-                
+
         return jsonify({"type": "success", "message": "Blog post created."})
     except Exception as e:
         db.session.rollback()
@@ -1367,7 +1521,7 @@ def admin_add_blog():
 @login_required
 def api_blog(blog_id):
     blog = db.session.get(Blog, blog_id)
-    if not blog or blog.content_type != 'blog':
+    if not blog or blog.content_type != "blog":
         return jsonify({"type": "error", "message": "Blog not found"}), 404
     if request.method == "GET":
         return jsonify(
@@ -1375,9 +1529,7 @@ def api_blog(blog_id):
                 "title": blog.title,
                 "content": blog.content,
                 "scheduled_at": (
-                    utc_naive_to_local(blog.scheduled_at)
-                    if blog.scheduled_at
-                    else ""
+                    utc_naive_to_local(blog.scheduled_at) if blog.scheduled_at else ""
                 ),
                 "post_to_wordpress": blog.post_to_wordpress,
             }
@@ -1392,11 +1544,13 @@ def api_blog(blog_id):
             scheduled_at = None
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    date_str = scheduled_at_str.strip().replace("T", " ")
                     # 1) parse as naive local (the time user picked)
                     local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                     # 2) attach Europe/Helsinki tz
-                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    local_aware = local_naive.replace(
+                        tzinfo=ZoneInfo("Europe/Helsinki")
+                    )
                     # 3) convert to UTC
                     utc_aware = local_aware.astimezone(timezone.utc)
                     # 4) store as naive UTC (matches your current model)
@@ -1414,12 +1568,16 @@ def api_blog(blog_id):
             blog.post_to_wordpress = bool(request.form.get("post_to_wordpress"))
             blog.status = "published" if not scheduled_at else "scheduled"
             db.session.commit()
-            
+
             # Publish now if needed
-            if blog.status == "published" and blog.post_to_wordpress and not blog.posted_to_wordpress:
+            if (
+                blog.status == "published"
+                and blog.post_to_wordpress
+                and not blog.posted_to_wordpress
+            ):
                 settings = {s.key: s.value for s in Settings.query.all()}
                 post_to_wordpress(blog, settings)
-                    
+
             return jsonify({"type": "success", "message": "Blog post updated."})
         except Exception as e:
             db.session.rollback()
@@ -1440,7 +1598,7 @@ def admin_add_ai_blog():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                date_str = scheduled_at_str.strip().replace('T', ' ')
+                date_str = scheduled_at_str.strip().replace("T", " ")
                 # 1) parse as naive local (the time user picked)
                 local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                 # 2) attach Europe/Helsinki tz
@@ -1470,7 +1628,7 @@ def admin_add_ai_blog():
 
             ai_blog = generate_ai_blog(ai_text_topic)
             # log_error(f"AI blog generation for topic: {ai_text_topic}")
-            
+
             title = ai_blog.get("headline", "AI Generated Blog Post")
             content = ai_blog.get("content", ai_text_topic)
         else:
@@ -1558,8 +1716,8 @@ def admin_add_social_post():
 
         # Handle image upload
         image_path = None
-        if 'image' in request.files:
-            image_file = request.files['image']
+        if "image" in request.files:
+            image_file = request.files["image"]
             if image_file and image_file.filename:
                 # Save image to static/uploads directory
                 upload_dir = os.path.join(current_app.static_folder, "uploads")
@@ -1574,7 +1732,7 @@ def admin_add_social_post():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                date_str = scheduled_at_str.strip().replace('T', ' ')
+                date_str = scheduled_at_str.strip().replace("T", " ")
                 # 1) parse as naive local (the time user picked)
                 local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                 # 2) attach Europe/Helsinki tz
@@ -1598,14 +1756,14 @@ def admin_add_social_post():
             user_id=current_user.id,
             scheduled_at=scheduled_at,
             status=status,
-            content_type='social',
+            content_type="social",
             image_path=image_path,
             post_to_linkedin=post_to_linkedin_flag,
             post_to_x=post_to_twitter_flag,
         )
         db.session.add(social_post)
         db.session.commit()
-        
+
         # Publish now if needed
         if status == "published":
             settings = {s.key: s.value for s in Settings.query.all()}
@@ -1613,8 +1771,9 @@ def admin_add_social_post():
                 post_to_linkedin(social_post, settings)
             if post_to_twitter_flag:
                 from app import post_to_twitter
+
                 post_to_twitter(social_post, settings)
-                
+
         return jsonify({"type": "success", "message": "Social post created."})
     except Exception as e:
         db.session.rollback()
@@ -1625,7 +1784,7 @@ def admin_add_social_post():
 @login_required
 def api_social_post(social_post_id):
     social_post = db.session.get(Blog, social_post_id)
-    if not social_post or social_post.content_type != 'social':
+    if not social_post or social_post.content_type != "social":
         return jsonify({"type": "error", "message": "Social post not found"}), 404
     if request.method == "GET":
         return jsonify(
@@ -1639,10 +1798,12 @@ def api_social_post(social_post_id):
                 ),
                 "post_to_linkedin": social_post.post_to_linkedin,
                 # "post_to_twitter": social_post.post_to_x,
-                
-                "image_path": url_for('static', filename=social_post.image_path) if social_post.image_path else None,
+                "image_path": (
+                    url_for("static", filename=social_post.image_path)
+                    if social_post.image_path
+                    else None
+                ),
                 # previewable image path
-                
             }
         )
     elif request.method == "PUT":
@@ -1652,8 +1813,8 @@ def api_social_post(social_post_id):
             scheduled_at_str = request.form.get("scheduled_at")
 
             # Handle image upload
-            if 'image' in request.files:
-                image_file = request.files['image']
+            if "image" in request.files:
+                image_file = request.files["image"]
                 if image_file and image_file.filename:
                     # Save image to static/uploads directory
                     upload_dir = os.path.join(current_app.static_folder, "uploads")
@@ -1668,11 +1829,13 @@ def api_social_post(social_post_id):
             scheduled_at = None
             if scheduled_at_str and scheduled_at_str.strip():
                 try:
-                    date_str = scheduled_at_str.strip().replace('T', ' ')
+                    date_str = scheduled_at_str.strip().replace("T", " ")
                     # 1) parse as naive local (the time user picked)
                     local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                     # 2) attach Europe/Helsinki tz
-                    local_aware = local_naive.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+                    local_aware = local_naive.replace(
+                        tzinfo=ZoneInfo("Europe/Helsinki")
+                    )
                     # 3) convert to UTC
                     utc_aware = local_aware.astimezone(timezone.utc)
                     # 4) store as naive UTC (matches your current model)
@@ -1690,20 +1853,20 @@ def api_social_post(social_post_id):
             social_post.post_to_x = bool(request.form.get("post_to_twitter"))
             social_post.status = "published" if not scheduled_at else "scheduled"
             db.session.commit()
-            
+
             # Publish now if needed
-            if (
-                social_post.status == "published"
-                and (social_post.post_to_linkedin or social_post.post_to_x)
+            if social_post.status == "published" and (
+                social_post.post_to_linkedin or social_post.post_to_x
             ):
                 settings = {s.key: s.value for s in Settings.query.all()}
                 if social_post.post_to_linkedin and not social_post.posted_to_linkedin:
-                    
+
                     post_to_linkedin(social_post, settings)
                 if social_post.post_to_x and not social_post.posted_to_x:
                     from app import post_to_twitter
+
                     post_to_twitter(social_post, settings)
-                    
+
             return jsonify({"type": "success", "message": "Social post updated."})
         except Exception as e:
             db.session.rollback()
@@ -1715,7 +1878,7 @@ def api_social_post(social_post_id):
 def delete_social_post(social_post_id):
     try:
         social_post = db.session.get(Blog, social_post_id)
-        if not social_post or social_post.content_type != 'social':
+        if not social_post or social_post.content_type != "social":
             return jsonify({"type": "error", "message": "Social post not found"}), 404
         db.session.delete(social_post)
         db.session.commit()
@@ -1726,6 +1889,7 @@ def delete_social_post(social_post_id):
         log_error(f"Error deleting social post {social_post_id}: {str(e)}")
         flash("Error deleting social post.", "error")
         return redirect(url_for("main.admin_social_posts"))
+
 
 @main.route("/admin/ai-social-posts/add", methods=["POST"])
 @login_required
@@ -1741,7 +1905,7 @@ def admin_add_ai_social_post():
         scheduled_at = None
         if scheduled_at_str and scheduled_at_str.strip():
             try:
-                date_str = scheduled_at_str.strip().replace('T', ' ')
+                date_str = scheduled_at_str.strip().replace("T", " ")
                 # 1) parse as naive local (the time user picked)
                 local_naive = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
                 # 2) attach Europe/Helsinki tz
@@ -1800,11 +1964,11 @@ def admin_add_ai_social_post():
             print(ai_blog)
             # print type of ai blog
             print(type(ai_blog))
-            
+
             # title = ai_blog.get("headline", "AI Generated Post")
             # content = ai_blog.get("content", extracted_text)
-            title=content.get("headline", "AI Generated Post")
-            content=content.get("content", extracted_text)
+            title = content.get("headline", "AI Generated Post")
+            content = content.get("content", extracted_text)
 
         blog = Blog(
             title=title,
@@ -1813,7 +1977,7 @@ def admin_add_ai_social_post():
             scheduled_at=scheduled_at,
             status=status,
             post_to_linkedin=post_to_linkedin_flag,
-            content_type='social',
+            content_type="social",
         )
         db.session.add(blog)
         db.session.commit()
@@ -1832,6 +1996,7 @@ def admin_add_ai_social_post():
         return jsonify(
             {"type": "error", "message": f"Error creating social post: {str(e)}"}
         )
+
 
 def generate_ai_blog(content):
     openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
@@ -1903,9 +2068,12 @@ def generate_ai_blog(content):
 
         return {"headline": headline, "content": content}
 
+
 def generate_ai_social_post(content):
     openai_key = db.session.query(Settings).filter_by(key="openai_key").first()
-    linkedin_char_limit = db.session.query(Settings).filter_by(key="linkedin_char_limit").first() or 800
+    linkedin_char_limit = (
+        db.session.query(Settings).filter_by(key="linkedin_char_limit").first() or 800
+    )
     if not openai_key or not openai_key.value:
         raise Exception("OpenAI API key not configured")
 
@@ -1975,8 +2143,6 @@ def generate_ai_social_post(content):
         return {"headline": headline, "content": content}
 
 
-
-
 @main.route("/test-social-scheduler")
 @login_required
 def test_social_scheduler():
@@ -1990,7 +2156,12 @@ def test_social_scheduler():
             }
         )
     except Exception as e:
-        return jsonify({"type": "error", "message": f"Social posts scheduler test failed: {str(e)}"})
+        return jsonify(
+            {
+                "type": "error",
+                "message": f"Social posts scheduler test failed: {str(e)}",
+            }
+        )
 
 
 @main.route("/test-linkedin-posting")
@@ -1999,38 +2170,41 @@ def test_linkedin_posting():
     """Test LinkedIn posting functionality"""
     try:
         settings = {s.key: s.value for s in Settings.query.all()}
-        
+
         # Create a test social post
         test_post = Blog(
             title="Test LinkedIn Post",
             content="This is a test post from the application to verify LinkedIn integration.",
             user_id=current_user.id,
             status="published",
-            content_type='social',
+            content_type="social",
             post_to_linkedin=True,
-            post_to_x=False
+            post_to_x=False,
         )
         db.session.add(test_post)
         db.session.commit()
-        
+
         # Try to post to LinkedIn
-        
+
         success, error = post_to_linkedin(test_post, settings)
-        
+
         if success:
-            return jsonify({
-                "type": "success",
-                "message": "LinkedIn posting test successful!",
-                "post_id": test_post.linkedin_post_id
-            })
+            return jsonify(
+                {
+                    "type": "success",
+                    "message": "LinkedIn posting test successful!",
+                    "post_id": test_post.linkedin_post_id,
+                }
+            )
         else:
-            return jsonify({
-                "type": "error",
-                "message": f"LinkedIn posting test failed: {error}"
-            })
-            
+            return jsonify(
+                {"type": "error", "message": f"LinkedIn posting test failed: {error}"}
+            )
+
     except Exception as e:
-        return jsonify({"type": "error", "message": f"LinkedIn posting test failed: {str(e)}"})
+        return jsonify(
+            {"type": "error", "message": f"LinkedIn posting test failed: {str(e)}"}
+        )
 
 
 @main.route("/test-twitter-posting")
@@ -2039,38 +2213,42 @@ def test_twitter_posting():
     """Test Twitter posting functionality"""
     try:
         settings = {s.key: s.value for s in Settings.query.all()}
-        
+
         # Create a test social post
         test_post = Blog(
             title="Test Twitter Post",
             content="This is a test tweet from the application to verify Twitter integration.",
             user_id=current_user.id,
             status="published",
-            content_type='social',
+            content_type="social",
             post_to_linkedin=False,
-            post_to_x=True
+            post_to_x=True,
         )
         db.session.add(test_post)
         db.session.commit()
-        
+
         # Try to post to Twitter
         from app import post_to_twitter
+
         success, error = post_to_twitter(test_post, settings)
-        
+
         if success:
-            return jsonify({
-                "type": "success",
-                "message": "Twitter posting test successful!",
-                "post_id": test_post.x_post_id
-            })
+            return jsonify(
+                {
+                    "type": "success",
+                    "message": "Twitter posting test successful!",
+                    "post_id": test_post.x_post_id,
+                }
+            )
         else:
-            return jsonify({
-                "type": "error",
-                "message": f"Twitter posting test failed: {error}"
-            })
-            
+            return jsonify(
+                {"type": "error", "message": f"Twitter posting test failed: {error}"}
+            )
+
     except Exception as e:
-        return jsonify({"type": "error", "message": f"Twitter posting test failed: {str(e)}"})
+        return jsonify(
+            {"type": "error", "message": f"Twitter posting test failed: {str(e)}"}
+        )
 
 
 @main.route("/check-scheduled-posts")
@@ -2476,7 +2654,7 @@ def send_newsletter_emails(emails, subject, email_body, settings):
                 log_error(f"Failed to send newsletter to {email_obj.email}: {str(e)}")
 
     except Exception as e:
-        log_error(f"Error in send_newsletter_emails: {str(e)}")
+        log_error(f"Error in send_newsletter: {str(e)}")
 
 
 @main.route("/test-recurring-newsletter/<source>")
@@ -2575,7 +2753,7 @@ def publish_scheduled_social_posts():
 
         # Find scheduled social posts that are due
         social_posts = Blog.query.filter(
-            Blog.content_type == 'social',
+            Blog.content_type == "social",
             Blog.status == "scheduled",
             Blog.scheduled_at != None,
             Blog.scheduled_at <= now,
@@ -2585,30 +2763,42 @@ def publish_scheduled_social_posts():
             try:
                 # Post to LinkedIn if enabled and not already posted
                 if social_post.post_to_linkedin and not social_post.posted_to_linkedin:
-                    
+
                     success, error = post_to_linkedin(social_post, settings)
                     if success:
-                        log_error(f"Successfully published social post ID {social_post.id} to LinkedIn")
+                        log_error(
+                            f"Successfully published social post ID {social_post.id} to LinkedIn"
+                        )
                     else:
-                        log_error(f"Failed to publish social post ID {social_post.id} to LinkedIn: {error}")
+                        log_error(
+                            f"Failed to publish social post ID {social_post.id} to LinkedIn: {error}"
+                        )
 
                 # Post to Twitter if enabled and not already posted
                 if social_post.post_to_x and not social_post.posted_to_x:
                     from app import post_to_twitter
+
                     success, error = post_to_twitter(social_post, settings)
                     if success:
-                        log_error(f"Successfully published social post ID {social_post.id} to Twitter")
+                        log_error(
+                            f"Successfully published social post ID {social_post.id} to Twitter"
+                        )
                     else:
-                        log_error(f"Failed to publish social post ID {social_post.id} to Twitter: {error}")
+                        log_error(
+                            f"Failed to publish social post ID {social_post.id} to Twitter: {error}"
+                        )
 
                 # Update status to published if all enabled platforms are posted
-                if ((not social_post.post_to_linkedin or social_post.posted_to_linkedin) and 
-                    (not social_post.post_to_x or social_post.posted_to_x)):
+                if (
+                    not social_post.post_to_linkedin or social_post.posted_to_linkedin
+                ) and (not social_post.post_to_x or social_post.posted_to_x):
                     social_post.status = "published"
                     db.session.commit()
 
             except Exception as e:
-                log_error(f"Exception processing scheduled social post ID {social_post.id}: {str(e)}")
+                log_error(
+                    f"Exception processing scheduled social post ID {social_post.id}: {str(e)}"
+                )
 
     except Exception as e:
         log_error(f"Social posts scheduler error: {str(e)}")
@@ -2619,65 +2809,78 @@ def publish_scheduled_newsletters():
     """Publish scheduled newsletters - unauthenticated endpoint for cron jobs"""
     try:
         now = datetime.utcnow()  # Use local time instead of UTC
-        
+
         # Find scheduled newsletters that are due
         newsletters = Newsletter.query.filter(
             Newsletter.status == "scheduled",
             Newsletter.scheduled_at != None,
             Newsletter.scheduled_at <= now,
         ).all()
-        
+
         results = []
-        
+
         for newsletter in newsletters:
             try:
                 success, error = send_newsletter_from_custom(newsletter)
-                
+
                 if success:
                     newsletter.status = "sent"
                     newsletter.sent_at = datetime.now()
                     db.session.commit()
-                    results.append({
-                        "newsletter_id": newsletter.id,
-                        "title": newsletter.title,
-                        "status": "sent",
-                        "message": "Newsletter sent successfully"
-                    })
-                    log_error(f"Successfully sent scheduled newsletter ID {newsletter.id}: {newsletter.title}")
+                    results.append(
+                        {
+                            "newsletter_id": newsletter.id,
+                            "title": newsletter.title,
+                            "status": "sent",
+                            "message": "Newsletter sent successfully",
+                        }
+                    )
+                    log_error(
+                        f"Successfully sent scheduled newsletter ID {newsletter.id}: {newsletter.title}"
+                    )
                 else:
                     newsletter.error_message = error
                     db.session.commit()
-                    results.append({
-                        "newsletter_id": newsletter.id,
-                        "title": newsletter.title,
-                        "status": "failed",
-                        "message": f"Failed to send newsletter: {error}"
-                    })
-                    log_error(f"Failed to send scheduled newsletter ID {newsletter.id}: {error}")
-                    
+                    results.append(
+                        {
+                            "newsletter_id": newsletter.id,
+                            "title": newsletter.title,
+                            "status": "failed",
+                            "message": f"Failed to send newsletter: {error}",
+                        }
+                    )
+                    log_error(
+                        f"Failed to send scheduled newsletter ID {newsletter.id}: {error}"
+                    )
+
             except Exception as e:
                 newsletter.error_message = str(e)
                 db.session.commit()
-                results.append({
-                    "newsletter_id": newsletter.id,
-                    "title": newsletter.title,
-                    "status": "error",
-                    "message": f"Exception: {str(e)}"
-                })
-                log_error(f"Exception processing scheduled newsletter ID {newsletter.id}: {str(e)}")
-        
-        return jsonify({
-            "type": "success",
-            "processed_count": len(newsletters),
-            "results": results
-        })
-        
+                results.append(
+                    {
+                        "newsletter_id": newsletter.id,
+                        "title": newsletter.title,
+                        "status": "error",
+                        "message": f"Exception: {str(e)}",
+                    }
+                )
+                log_error(
+                    f"Exception processing scheduled newsletter ID {newsletter.id}: {str(e)}"
+                )
+
+        return jsonify(
+            {"type": "success", "processed_count": len(newsletters), "results": results}
+        )
+
     except Exception as e:
         log_error(f"Newsletter scheduler error: {str(e)}")
-        return jsonify({
-            "type": "error",
-            "message": f"Newsletter scheduler error: {str(e)}"
-        }), 500
+        return (
+            jsonify(
+                {"type": "error", "message": f"Newsletter scheduler error: {str(e)}"}
+            ),
+            500,
+        )
+
 
 @main.route("/upload-image", methods=["POST"])
 def upload_image():
@@ -2733,6 +2936,7 @@ def upload_image():
             500,
         )
 
+
 def post_to_linkedin(blog, settings):
     """Post to LinkedIn company page"""
     try:
@@ -2749,7 +2953,7 @@ def post_to_linkedin(blog, settings):
         api_url = "https://api.linkedin.com/v2/ugcPosts"
 
         # Prepare the post data
-        blog_description= extract_clean_text(blog.content)
+        blog_description = extract_clean_text(blog.content)
         post_data = {
             "author": f"urn:li:organization:{org_id}",
             "lifecycleState": "PUBLISHED",
@@ -2818,7 +3022,9 @@ def post_to_linkedin(blog, settings):
                     "lifecycleState": "PUBLISHED",
                     "specificContent": {
                         "com.linkedin.ugc.ShareContent": {
-                            "shareCommentary": {"text": blog.title + "\n" + blog.content},
+                            "shareCommentary": {
+                                "text": blog.title + "\n" + blog.content
+                            },
                             "shareMediaCategory": "IMAGE",
                             "media": [{"status": "READY", "media": image_urn}],
                         }
@@ -2867,25 +3073,25 @@ def post_to_linkedin(blog, settings):
         log_error(f"Exception posting to LinkedIn for Blog ID {blog.id}: {str(e)}")
         return False, str(e)
 
+
 def extract_clean_text(blob):
     """Parses and flattens JSON-like text, or returns cleaned string."""
     if isinstance(blob, dict):
-        return ' '.join(str(v) for v in blob.values())
+        return " ".join(str(v) for v in blob.values())
 
     if isinstance(blob, str):
         try:
             # Try to parse JSON string
             parsed = json.loads(blob)
             if isinstance(parsed, dict):
-                return ' '.join(str(v) for v in parsed.values())
+                return " ".join(str(v) for v in parsed.values())
         except json.JSONDecodeError:
             pass
 
         # Fallback regex-based cleanup
-        blob = re.sub(r'[{}"]+', '', blob)             # remove {, }, "
-        blob = re.sub(r'\b\w+\s*:\s*', '', blob)        # remove keys like headline:
+        blob = re.sub(r'[{}"]+', "", blob)  # remove {, }, "
+        blob = re.sub(r"\b\w+\s*:\s*", "", blob)  # remove keys like headline:
         # blob = re.sub(r'\s+', ' ', blob).strip()        # collapse spaces
         return blob
 
     return str(blob).strip()
-    
