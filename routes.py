@@ -17,7 +17,7 @@ from flask import (
 from sqlalchemy.exc import SQLAlchemyError
 import feedparser
 
-import re
+import re, hmac
 from sqlalchemy import func
 from flask_login import login_user, login_required, logout_user, current_user
 from models import (
@@ -69,6 +69,14 @@ import html
 
 # Create blueprint
 main = Blueprint("main", __name__)
+
+EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,63}$", re.I)
+
+def verify_api_key(req):
+    incoming = req.headers.get("X-Api-Key", "")
+    expected = current_app.config["SUBSCRIBE_API_KEY"]
+    # constant-time compare
+    return hmac.compare_digest(incoming, expected)
 
 # Public routes
 @main.route("/")
@@ -777,7 +785,8 @@ def send_newsletter_from_custom(newsletter):
             if not re.match(r"^https?://", link, flags=re.IGNORECASE):
                 link = "#"
 
-            date_html = f"<br><small style='color:#6c757d;'>{html.escape(pub_date)}</small>" if pub_date else ""
+            # date_html = f"<br><small style='color:#6c757d;'>{html.escape(pub_date)}</small>" if pub_date else ""
+            date_html = ""
             post_html += (
                 f"<p><strong><a href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">"
                 f"{title}</a></strong><br>{snippet}{date_html}</p>"
@@ -3002,7 +3011,41 @@ def upload_image():
             500,
         )
 
+# secured ddos and other secruity check newsletter subscription endpoint that only saved email
+@main.route("/subscribe-newsletter", methods=["POST"])
+def subscribe_newsletter():
+    """Subscribe to the newsletter with email validation"""
+    try:
+        # Require JSON and API key
+        if request.content_type != "application/json":
+            return jsonify({"error": "Unsupported content type"}), 415
+        # if not verify_api_key(request):
+        #     return jsonify({"error": "Unauthorized"}), 401
 
+        data = request.get_json(silent=True) or {}
+        email = (data.get("email", "")).strip().lower()
+
+        # Validate
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+        if len(email) > 255 or not EMAIL_RE.match(email):
+            return jsonify({"error": "Invalid email format"}), 400
+
+        # Idempotent save
+        existing = NewsletterEmail.query.filter_by(email=email).first()
+        if existing:
+            return jsonify({"message": "Email already subscribed"}), 200
+
+        sub = NewsletterEmail(email=email, is_active=True)
+        db.session.add(sub)
+        db.session.commit()
+        return jsonify({"message": "Successfully subscribed to the newsletter"}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        # your logger here
+        return jsonify({"error": "Internal server error"}), 500
+    
 def post_to_linkedin(blog, settings):
     """Post to LinkedIn company page"""
     try:

@@ -12,6 +12,8 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     APP_NAME = os.getenv('APP_NAME', 'GPT-Lab Newsletter')
+    MAX_CONTENT_LENGTH = 1024 * 4  # only tiny JSON payloads
+    SUBSCRIBE_API_KEY = os.getenv("SUBSCRIBE_API_KEY", "super-long-random-stringw")
 
     @staticmethod
     def get_default_settings() -> list:
