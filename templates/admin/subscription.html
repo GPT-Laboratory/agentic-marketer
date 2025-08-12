@@ -20,10 +20,20 @@
     <div class="card shadow mb-4">
         <div class="card-header py-3 d-flex justify-content-between align-items-center">
             <h6 class="m-0 font-weight-bold text-primary">Email Subscribers</h6>
-            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addEmailModal">
-                <i class="fas fa-plus"></i> Add Email
-            </button>
+
+            <div class="d-flex gap-2">
+                <!-- Existing add single email button -->
+                <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addEmailModal">
+                    <i class="fas fa-plus"></i> Add Email
+                </button>
+
+                <!-- NEW: Upload CSV button -->
+                <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#uploadCsvModal">
+                    <i class="fas fa-file-upload"></i> Upload CSV
+                </button>
+            </div>
         </div>
+
         <div class="card-body">
             <div class="table-responsive">
                 <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
@@ -48,15 +58,13 @@
                             </td>
                             <td>{{ email.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>
-                                <form action="{{ url_for('main.toggle_subscription_email', email_id=email.id) }}"
-                                    method="POST" class="d-inline">
+                                <form action="{{ url_for('main.toggle_subscription_email', email_id=email.id) }}" method="POST" class="d-inline">
                                     <button type="submit" class="btn btn-sm btn-warning">
                                         {% if email.is_active %}Deactivate{% else %}Activate{% endif %}
                                     </button>
                                 </form>
-                                <form action="{{ url_for('main.delete_subscription_email', email_id=email.id) }}"
-                                    method="POST" class="d-inline"
-                                    onsubmit="return confirm('Are you sure you want to delete this email?');">
+                                <form action="{{ url_for('main.delete_subscription_email', email_id=email.id) }}" method="POST" class="d-inline"
+                                      onsubmit="return confirm('Are you sure you want to delete this email?');">
                                     <button type="submit" class="btn btn-danger btn-sm">
                                         <i class="fas fa-trash"></i>
                                     </button>
@@ -72,18 +80,20 @@
 </div>
 
 <!-- Add Email Modal -->
-<div class="modal fade" id="addEmailModal" tabindex="-1">
+<div class="modal fade" id="addEmailModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Add Email Subscriber</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
+            <!-- Single email form -->
             <form action="{{ url_for('main.add_subscription_email') }}" method="POST">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="email" class="form-label">Email Address</label>
                         <input type="email" class="form-control" id="email" name="email" required>
+                        <div class="form-text">Enter one email to add a single subscriber.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -94,11 +104,45 @@
         </div>
     </div>
 </div>
+
+<!-- NEW: Upload CSV Modal -->
+<div class="modal fade" id="uploadCsvModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upload CSV of Subscribers</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <!-- CSV upload form (posts to same route) -->
+            <form action="{{ url_for('main.add_subscription_email') }}" method="POST" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="csv_file" class="form-label">CSV File</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                        <div class="form-text">
+                            Upload a CSV containing emails. Either:
+                            <ul class="mb-0">
+                                <li>A single column of emails, or</li>
+                                <li>A header row with an <code>email</code> column</li>
+                            </ul>
+                            Duplicates will be skipped automatically.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-success">Upload & Add</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 <script>
-
+// You can add any client-side validation or preview logic here if needed.
 </script>
 {% endblock %}

@@ -17,7 +17,7 @@ from flask import (
 from sqlalchemy.exc import SQLAlchemyError
 import feedparser
 
-import re, hmac
+import re, hmac,csv, io
 from sqlalchemy import func
 from flask_login import login_user, login_required, logout_user, current_user
 from models import (
@@ -70,7 +70,12 @@ import html
 # Create blueprint
 main = Blueprint("main", __name__)
 
-EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,63}$", re.I)
+EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,63}$", re.IGNORECASE)
+# EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
+
+def is_valid_email(s: str) -> bool:
+    s = (s or "").strip()
+    return bool(EMAIL_RE.match(s))
 
 def verify_api_key(req):
     incoming = req.headers.get("X-Api-Key", "")
@@ -409,16 +414,107 @@ def admin_subscription():
 @main.route("/admin/subscription/add", methods=["POST"])
 @login_required
 def add_subscription_email():
-    email = request.form.get("email")
-    if email:
-        existing = NewsletterEmail.query.filter_by(email=email).first()
-        if existing:
-            flash("Email already exists.", "warning")
+    emails_to_add = set()
+
+    # 1) CSV upload path
+    csv_file = request.files.get("csv_file")
+    if csv_file and csv_file.filename:
+        # Read in-memory, no saving to backend
+        try:
+            raw = csv_file.read().decode("utf-8-sig", errors="ignore")
+        except UnicodeDecodeError:
+            # Fallback for odd encodings
+            raw = csv_file.read().decode("latin-1", errors="ignore")
+
+        f = io.StringIO(raw)
+
+        # Try flexible parsing: handle both headered and plain CSVs
+        # First attempt DictReader to catch "email" column; if no headers, fall back to rows.
+        f.seek(0)
+        sniff = csv.Sniffer()
+        try:
+            # detect delimiter if possible
+            dialect = sniff.sniff(raw[:1024])
+        except csv.Error:
+            dialect = csv.excel
+
+        f.seek(0)
+        reader = csv.reader(f, dialect)
+        header = None
+        try:
+            peek = next(reader)
+        except StopIteration:
+            peek = None
+
+        if peek is None:
+            pass  # empty file
         else:
-            new_email = NewsletterEmail(email=email)
-            db.session.add(new_email)
+            # If header likely present, use header-based logic
+            # Heuristic: if any cell looks like 'email'
+            looks_like_header = any(c.strip().lower() == "email" for c in peek)
+            if looks_like_header:
+                header = [c.strip().lower() for c in peek]
+                email_idx = header.index("email")
+                for row in reader:
+                    if email_idx < len(row):
+                        e = (row[email_idx] or "").strip().lower()
+                        if is_valid_email(e):
+                            emails_to_add.add(e)
+            else:
+                # Treat every cell in every row as a potential email
+                # (Works for single-column CSVs too)
+                # include first row (peek) then rest
+                for cell in peek:
+                    e = (cell or "").strip().lower()
+                    if is_valid_email(e):
+                        emails_to_add.add(e)
+                for row in reader:
+                    for cell in row:
+                        e = (cell or "").strip().lower()
+                        if is_valid_email(e):
+                            emails_to_add.add(e)
+
+    # 2) Single input field path (fallback if no CSV)
+    else:
+        e = (request.form.get("email") or "").strip().lower()
+        if is_valid_email(e):
+            emails_to_add.add(e)
+
+    if not emails_to_add:
+        flash("No valid emails found.", "warning")
+        return redirect(url_for("main.admin_subscription"))
+
+    # Normalize to lowercase to avoid case-sensitive dupes
+    candidate_list = list(emails_to_add)
+
+    # Pull existing emails in one query (case-insensitive)
+    existing_rows = (
+        db.session.query(NewsletterEmail.email)
+        .filter(func.lower(NewsletterEmail.email).in_(candidate_list))
+        .all()
+    )
+    existing_set = {e[0].lower() for e in existing_rows}
+
+    new_only = [email for email in emails_to_add if email not in existing_set]
+
+    added_count = 0
+    if new_only:
+        objects = [NewsletterEmail(email=e) for e in new_only]
+        db.session.bulk_save_objects(objects)
+        try:
             db.session.commit()
-            flash("Email added successfully.", "success")
+            added_count = len(objects)
+        except Exception as ex:
+            db.session.rollback()
+            flash(f"Failed to add some emails: {ex}", "danger")
+            return redirect(url_for("main.admin_subscription"))
+
+    skipped_count = len(emails_to_add) - added_count
+    msg = f"Added {added_count} email(s)."
+    if skipped_count:
+        msg += f" Skipped {skipped_count} duplicate(s)."
+    flash(msg, "success" if added_count else "warning")
+
     return redirect(url_for("main.admin_subscription"))
 
 
