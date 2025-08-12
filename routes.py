@@ -3014,16 +3014,21 @@ def upload_image():
 # secured ddos and other secruity check newsletter subscription endpoint that only saved email
 @main.route("/subscribe-newsletter", methods=["POST"])
 def subscribe_newsletter():
-    """Subscribe to the newsletter with email validation"""
     try:
-        # Require JSON and API key
-        if request.content_type != "application/json":
-            return jsonify({"error": "Unsupported content type"}), 415
-        # if not verify_api_key(request):
-        #     return jsonify({"error": "Unauthorized"}), 401
+        # Read content type once for debugging
+        ctype = (request.content_type or "").lower()
 
-        data = request.get_json(silent=True) or {}
-        email = (data.get("email", "")).strip().lower()
+        # Accept JSON or form-encoded
+        data = {}
+        if "application/json" in ctype:
+            data = request.get_json(silent=True) or {}
+        else:
+            # CF7 plugins often send form-encoded or multipart
+            data = request.form.to_dict(flat=True)
+
+        # Try both common keys
+        raw_email = data.get("email") or data.get("your-email") or ""
+        email = raw_email.strip().lower()
 
         # Validate
         if not email:
@@ -3043,7 +3048,7 @@ def subscribe_newsletter():
 
     except Exception as e:
         db.session.rollback()
-        # your logger here
+        # log_error(f"subscribe error: {e} | ctype={request.content_type} | body={request.get_data(as_text=True)[:500]}")
         return jsonify({"error": "Internal server error"}), 500
     
 def post_to_linkedin(blog, settings):
