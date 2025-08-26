@@ -916,7 +916,7 @@ def send_newsletter_from_custom(newsletter):
             <html>
                 <body>
                     <p>If you wish to unsubscribe from our newsletter, please click the link below:</p>
-                    <p><a href="{base_url}/unsubscribe?email={email_entry.email}">Unsubscribe</a></p>
+                    <p><a href="{base_url}/unsubscribe/{email_entry.email}">Unsubscribe</a></p>
                 </body>
             </html>
             """.format(base_url=base_url, email_entry=email_entry.email)
@@ -1213,7 +1213,7 @@ def send_newsletter():
 
     for email_entry in active_emails:
         base_url = request.host_url.rstrip('/')
-        unsubscribe_link = f"{base_url}/unsubscribe?email={email_entry.email}"
+        unsubscribe_link = f"{base_url}/unsubscribe/{email_entry.email}"
         email_body += f"<p><a href='{unsubscribe_link}'>You can Unsubscribe here</a></p>"
 
         receiver_email = email_entry.email
