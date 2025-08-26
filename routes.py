@@ -891,7 +891,7 @@ def send_newsletter_from_custom(newsletter):
         if not post_html:
             return False, "No valid posts found"
 
-        email_body = email_starting + post_html + email_ending
+        email_body = email_starting + post_html + email_ending 
 
         # ---- Send emails (unchanged) ----
         active_emails = NewsletterEmail.query.filter_by(is_active=True).all()
@@ -911,6 +911,18 @@ def send_newsletter_from_custom(newsletter):
         failed_count = 0
 
         for email_entry in active_emails:
+            base_url = request.host_url.rstrip('/')
+            unsubscribe_text = """
+            <html>
+                <body>
+                    <p>If you wish to unsubscribe from our newsletter, please click the link below:</p>
+                    <p><a href="{base_url}/unsubscribe?email={email_entry.email}">Unsubscribe</a></p>
+                </body>
+            </html>
+            """.format(base_url=base_url, email_entry=email_entry.email)
+
+            email_body += unsubscribe_text
+            
             try:
                 message = MIMEMultipart()
                 message["From"] = smtp_username
@@ -1200,12 +1212,17 @@ def send_newsletter():
     success, failed = 0, 0
 
     for email_entry in active_emails:
+        base_url = request.host_url.rstrip('/')
+        unsubscribe_link = f"{base_url}/unsubscribe?email={email_entry.email}"
+        email_body += f"<p><a href='{unsubscribe_link}'>You can Unsubscribe here</a></p>"
+
         receiver_email = email_entry.email
         message = MIMEMultipart()
         message["From"] = sender_email
         message["To"] = receiver_email
         message["Subject"] = subject
         message.attach(MIMEText(email_body, "html"))
+        
 
         try:
             with smtplib.SMTP_SSL(smtp_server, port) as server:
@@ -3106,6 +3123,50 @@ def upload_image():
             ),
             500,
         )
+# unsubscribe url with email as param in get request example.com/admin@email.com
+@main.route("/unsubscribe/<string:email>", methods=["GET"])
+def unsubscribe_newsletter(email):
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    # Find the subscription and mark it as inactive
+    subscription = NewsletterEmail.query.filter_by(email=email).first()
+    if not subscription:
+        return jsonify({"error": "Email not found"}), 404
+
+    subscription.is_active = False
+    db.session.commit()
+    # redirect to https://gpt-lab.eu/blogs/
+    # send email that you are successfully unsubscribed
+    settings = {s.key: s.value for s in Settings.query.all()}
+# --- SMTP ---
+    smtp_server = settings.get("SMTP_SERVER")
+    smtp_port = settings.get("SMTP_PORT")
+    smtp_username = settings.get("SMTP_USERNAME")
+    smtp_password = settings.get("SMTP_PASSWORD")
+    if not all([smtp_server, smtp_port, smtp_username, smtp_password]):
+        return False, "SMTP settings incomplete"
+
+    email_body = """
+    <html>
+        <body>
+            <p>You have successfully unsubscribed from the GPT-Lab Newsletter.</p>
+            <p>We're sorry to see you go. If you change your mind, you can always resubscribe on our website. <a href="https://gpt-lab.eu/blogs"> here</a>.</p>
+        </body>
+    </html>
+    """
+    message = MIMEMultipart()
+    message["From"] = smtp_username
+    message["To"] = email
+    message["Subject"] =  "You are success fully unsubscribed from GPT-Lab Newsletter"
+    message.attach(MIMEText(email_body, "html"))
+    with smtplib.SMTP_SSL(smtp_server, int(smtp_port)) as server:
+        server.login(smtp_username, smtp_password)
+        server.sendmail(smtp_username, email, message.as_string())
+    
+
+    return redirect("https://gpt-lab.eu/blogs/")
+    # return jsonify({"message": "Successfully unsubscribed from the newsletter"}), 200
 
 # secured ddos and other secruity check newsletter subscription endpoint that only saved email
 @main.route("/subscribe-newsletter", methods=["POST"])
