@@ -3134,8 +3134,12 @@ def unsubscribe_newsletter(email):
     if not subscription:
         return jsonify({"error": "Email not found"}), 404
 
-    subscription.is_active = False
+    # subscription.is_active = False
+    # db.session.commit()
+    # delete
+    db.session.delete(subscription)
     db.session.commit()
+
     # redirect to https://gpt-lab.eu/blogs/
     # send email that you are successfully unsubscribed
     settings = {s.key: s.value for s in Settings.query.all()}
